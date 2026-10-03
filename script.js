@@ -94,7 +94,6 @@ const DEFAULT_SCHEDULE = [
   {id:"20261011-pksk",date:"2026-10-11",day:"Ahad",time:"8.00 PM - 10.15 PM*",subject:"Persediaan PKSK",group:"Tahun 6",mode:"pksk",topic:"Karangan"}
 ];
 
-const ADMIN_CODES = ["1983"];
 const RATING_LABELS = [
   "Fokus dan kerjasama mentee",
   "Tahap kefahaman mentee",
@@ -533,8 +532,13 @@ async function saveMentorProfile(){
   currentMatric=matric;storageSet(KEYS.sessionMatric,currentMatric);bookings.filter(b=>b.email?.toLowerCase()===currentEmail).forEach(b=>{b.mentorName=fullName;b.mentorMatric=matric});saveAll();refreshIdentity();renderMentorProfile();renderMentorDirectory();notify("*admin*",`Profil mentor dikemas kini: ${fullName} (${matric}).`,"info","mentor_profile_updated");alert("Profil Mentor berjaya disimpan.")
 }
 function renderMentorDirectory(){
-  const finals=bookings.filter(isFinalStatus),emails=[...new Set(finals.map(b=>b.email?.toLowerCase()).filter(Boolean))];
-  const cards=emails.map(email=>{const p=profileByEmail(email),bs=finals.filter(b=>b.email?.toLowerCase()===email),fallback=bs[0];return {email,p,bs,name:p?.fullName||fallback?.mentorName||email,matric:p?.matric||fallback?.mentorMatric||"-"}});
+  const finals=bookings.filter(isFinalStatus);
+  const keys=[...new Set(finals.map(b=>b.userId||`matric:${b.mentorMatric||b.mentorName}`).filter(Boolean))];
+  const cards=keys.map(key=>{
+    const bs=finals.filter(b=>(b.userId||`matric:${b.mentorMatric||b.mentorName}`)===key),fallback=bs[0];
+    const p=mentorProfiles.find(x=>x.id===fallback?.userId) || mentorProfiles.find(x=>String(x.matric||"").toUpperCase()===String(fallback?.mentorMatric||"").toUpperCase());
+    return {p,bs,name:p?.fullName||fallback?.mentorName||"Mentor",matric:p?.matric||fallback?.mentorMatric||"-"};
+  });
   $("mentorDirectoryList").innerHTML=cards.length?cards.map(x=>`<article class="mentor-card"><div class="mentor-card-top"><img class="profile-photo" ${x.p?.photoKey?`data-file-key="${esc(x.p.photoKey)}"`:""} alt="Gambar mentor"><div><h4>${esc(x.name)}</h4><div class="matric">${esc(x.matric)}</div><div class="meta">${esc(x.p?.faculty||"Fakulti belum dilengkapkan")}<br>${esc(x.p?.course||"")}</div></div></div>${x.p?.about?`<p>${esc(x.p.about)}</p>`:""}<div class="tag-list">${(x.p?.subjects||[]).slice(0,6).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div><div class="service-count">${x.bs.length} sesi / tugasan mentor direkodkan</div></article>`).join(""):'<div class="empty">Belum ada mentor dengan tempahan yang diluluskan.</div>';
   hydrateStoredImages($("mentorDirectory"))
 }
@@ -623,7 +627,7 @@ function deleteReportRecord(id){
 }
 function renderApprovedReports(){
   const list=reports.filter(r=>r.status==="approved").sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));
-  $("approvedReportGallery").innerHTML=list.length?list.map(r=>{const b=bookings.find(x=>x.id===r.bookingId),s=slotById(b?.slotId),images=(r.attachments||[]).filter(a=>isImageType(a.type,a.name)),avg=(r.ratings||[]).length?((r.ratings.reduce((a,c)=>a+c,0))/r.ratings.length).toFixed(1):"-";if(!b)return"";return `<article class="report-story"><div class="report-cover">${images[0]?`<img data-file-key="${esc(images[0].key)}" alt="Aktiviti ${esc(bookingStudentName(b))}">`:`<span>Tiada gambar utama</span>`}</div><div class="report-body"><span class="approved-chip">LAPORAN DILULUSKAN</span><h3>${esc(bookingStudentName(b))}</h3><div class="meta">${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.subject)} • ${esc(s.group)}`:""}<br>Mentor: ${esc(b.mentorName)} • ${esc(b.mentorMatric||"-")}</div><div class="report-snippet"><b>Apa diajar:</b> ${esc(r.taught)}<br><b>Progress:</b> ${esc(r.progress)}</div><div class="rating-summary">★★★★★ <span>${avg}/5</span></div>${images.length>1?`<div class="report-thumbs">${images.slice(1,6).map(a=>`<img data-file-key="${esc(a.key)}" alt="Gambar aktiviti">`).join("")}</div>`:""}</div></article>`}).join(""):'<div class="empty">Belum ada laporan yang diluluskan.</div>';hydrateStoredImages($("approvedReportGallery"))
+  $("approvedReportGallery").innerHTML=list.length?list.map(r=>{const b=bookings.find(x=>x.id===r.bookingId),s=slotById(b?.slotId),images=(r.attachments||[]).filter(a=>isImageType(a.type,a.name)),avg=(r.ratings||[]).length?((r.ratings.reduce((a,c)=>a+c,0))/r.ratings.length).toFixed(1):"-";if(!b)return"";return `<article class="report-story"><div class="report-cover">${images[0]?`<img data-file-key="${esc(images[0].key)}" alt="Aktiviti ${esc(bookingStudentName(b))}">`:`<span>Tiada gambar utama</span>`}</div><div class="report-body"><span class="approved-chip">LAPORAN DILULUSKAN</span><h3>${esc(bookingStudentName(b))}</h3><div class="meta">${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.subject)} • ${esc(s.group)}`:""}<br>Mentor: ${esc(b.mentorName)} • ${esc(b.mentorMatric||"-")}</div><div class="report-snippet"><b>Apa diajar:</b> ${esc(r.taught)}<br><b>Progress:</b> ${esc(r.progress)}<br><b>Reaksi / kefahaman:</b> ${esc(r.reaction||"-")}<br><b>Perlu perhatian:</b> ${esc(r.attention||"-")}<br><b>Cadangan sesi seterusnya:</b> ${esc(r.next||"-")}</div><div class="rating-summary">★★★★★ <span>${avg}/5</span></div>${images.length>1?`<div class="report-thumbs">${images.slice(1,6).map(a=>`<img data-file-key="${esc(a.key)}" alt="Gambar aktiviti">`).join("")}</div>`:""}</div></article>`}).join(""):'<div class="empty">Belum ada laporan yang diluluskan.</div>';hydrateStoredImages($("approvedReportGallery"))
 }
 
 // ---------- Teaching materials ----------
@@ -712,19 +716,43 @@ function mapProfile(r){return {id:r.id,email:r.email||"",fullName:r.full_name||"
 function mapMentee(r){return {id:r.id,name:r.full_name||r.short_name||"",shortName:r.short_name||"",group:r.group_name,summary:r.description||"",photoKey:r.photo_path?sbFileKey("mentee-photos",r.photo_path):""}}
 function mapSlot(r){return {id:r.id,date:r.class_date,day:scheduleDayName(r.class_date),time:r.time_label,subject:r.subject,group:r.group_name,mode:r.mode||"individual",topic:r.topic||""}}
 function mapBooking(r){const s=slotById(r.slot_id);return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:r.mentor_email||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:r.allow_reassignment?"yes":"no",mentorNote:r.mentor_note||"",adminNote:r.admin_note||"",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at}}
+function mapPublicBooking(r){
+  const s=slotById(r.slot_id);
+  return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:"no",mentorNote:"",adminNote:"",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at};
+}
 function mapReport(r,atts){return {id:r.id,bookingId:r.booking_id,taught:r.taught||"",progress:r.progress||"",reaction:r.reaction||"",attention:r.attention||"",next:r.next_session||"",ratings:[r.rating_focus||0,r.rating_understanding||0,r.rating_communication||0,r.rating_motivation||0,r.rating_rukaiyah||0],status:r.status,adminNote:r.admin_feedback||"",createdAt:r.submitted_at,updatedAt:r.updated_at,attachments:(atts||[]).filter(a=>a.report_id===r.id).map(a=>({id:a.id,key:sbFileKey("report-files",a.storage_path),name:a.file_name,type:a.mime_type||"application/octet-stream"}))}}
 
 async function loadSupabaseState(){
   if(!supabaseClient||supabaseLoading)return;supabaseLoading=true;
   try{
-    const [p,m,s,b,r,ra,ma,mf,n]=await Promise.all([
-      supabaseClient.from("profiles").select("*"),supabaseClient.from("mentees").select("*").eq("active",true),supabaseClient.from("schedule_slots").select("*").eq("active",true),supabaseClient.from("bookings").select("*"),supabaseClient.from("reports").select("*"),supabaseClient.from("report_attachments").select("*"),supabaseClient.from("materials").select("*"),supabaseClient.from("material_files").select("*"),supabaseClient.from("notifications").select("*").order("created_at",{ascending:false})
+    const [p,m,s,b,r,ra,ma,mf,n,pb]=await Promise.all([
+      supabaseClient.from("profiles").select("*"),
+      supabaseClient.from("mentees").select("*").eq("active",true),
+      supabaseClient.from("schedule_slots").select("*").eq("active",true),
+      supabaseClient.from("bookings").select("*"),
+      supabaseClient.from("reports").select("*"),
+      supabaseClient.from("report_attachments").select("*"),
+      supabaseClient.from("materials").select("*"),
+      supabaseClient.from("material_files").select("*"),
+      supabaseClient.from("notifications").select("*").order("created_at",{ascending:false}),
+      supabaseClient.rpc("mentor_public_booking_snapshot")
     ]);
-    for(const x of [p,m,s,b,r,ra,ma,mf,n])if(x.error)console.warn("Supabase load:",x.error.message);
-    if(p.data)mentorProfiles=p.data.map(mapProfile);
+    for(const x of [p,m,s,b,r,ra,ma,mf,n,pb])if(x.error)console.warn("Supabase load:",x.error.message);
+    if(p.data){
+      const mapped=p.data.map(mapProfile).sort((a,b)=>String(b.updatedAt||"").localeCompare(String(a.updatedAt||"")));
+      const seen=new Set();
+      mentorProfiles=mapped.filter(x=>{const k=`${String(x.email||"").toLowerCase()}|${String(x.matric||"").toUpperCase()}`;if(!x.email&&!x.matric)return true;if(seen.has(k))return false;seen.add(k);return true});
+    }
     if(m.data)students=m.data.map(mapMentee);
     if(s.data&&s.data.length){SCHEDULE=s.data.map(mapSlot).sort(scheduleSort);if(!SCHEDULE.some(x=>x.date===selectedDate))selectedDate=SCHEDULE[0]?.date||""}
-    if(b.data)bookings=b.data.map(mapBooking);
+    if(adminMode){
+      if(b.data)bookings=b.data.map(mapBooking);
+    }else{
+      const merged=new Map();
+      (pb.data||[]).map(mapPublicBooking).forEach(x=>merged.set(x.id,x));
+      (b.data||[]).map(mapBooking).forEach(x=>merged.set(x.id,x));
+      bookings=[...merged.values()];
+    }
     if(r.data)reports=r.data.map(x=>mapReport(x,ra.data||[]));
     if(ma.data)materials=ma.data.map(x=>({id:x.id,slotId:x.slot_id,title:x.title||"",note:x.note||"",updatedAt:x.updated_at,materialFiles:(mf.data||[]).filter(f=>f.material_id===x.id&&f.file_kind==="teaching").map(f=>({id:f.id,key:sbFileKey("teaching-materials",f.storage_path),name:f.file_name,type:f.mime_type||"application/octet-stream"})),schemeFiles:(mf.data||[]).filter(f=>f.material_id===x.id&&f.file_kind==="scheme").map(f=>({id:f.id,key:sbFileKey("answer-schemes",f.storage_path),name:f.file_name,type:f.mime_type||"application/octet-stream"})),noteFiles:(mf.data||[]).filter(f=>f.material_id===x.id&&f.file_kind==="note").map(f=>({id:f.id,key:sbFileKey("teaching-materials",f.storage_path),name:f.file_name,type:f.mime_type||"application/octet-stream"}))}));
     if(n.data)notifications=n.data.map(x=>({id:x.id,target:x.audience==="admin"?"*admin*":x.user_id===currentUserId?currentEmail:"*",message:x.message,title:x.title,type:"info",event:x.link_type||"notification",bookingId:x.link_type==="booking"?x.link_id:null,read:x.is_read,createdAt:x.created_at}));
@@ -734,60 +762,68 @@ async function loadSupabaseState(){
 async function pushNotification({userId=null,audience="user",message,title="HELAA KRK",linkType=null,linkId=null}){if(!supabaseClient)return;const {error}=await supabaseClient.from("notifications").insert({user_id:userId,audience,title,message,link_type:linkType,link_id:linkId});if(error)console.warn("Notification:",error.message)}
 function notify(target,message,type="info",event="notification",meta={}){const local={id:uid(),target,message,type,event,read:false,createdAt:new Date().toISOString(),...meta};notifications.unshift(local);renderNotifications();updateNotifCounts();(async()=>{if(!supabaseClient)return;let audience="user",userId=null;if(target==="*admin*")audience="admin";else if(target==="*"){return}else{const b=meta.bookingId?bookings.find(x=>x.id===meta.bookingId):null;userId=b?.userId||mentorProfiles.find(p=>p.email.toLowerCase()===String(target).toLowerCase())?.id||null;if(!userId)return}await pushNotification({userId,audience,message,linkType:meta.kind==="booking"||String(event).startsWith("booking_")?"booking":String(event).startsWith("report_")?"report":event,linkId:meta.bookingId||null});await loadSupabaseState()})()}
 
-async function authenticateAndEnter(email,password,matric,wantAdmin=false){
-  initialiseSupabaseWhenConfigured();if(!supabaseClient){alert("Sambungan sistem belum tersedia.");return}
-  let {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
-  if(error&&!wantAdmin){const signup=await supabaseClient.auth.signUp({email,password,options:{data:{matric_no:matric}}});if(signup.error){alert("Log masuk tidak berjaya: "+error.message);return}if(!signup.data.session){alert("Akaun Mentor telah didaftarkan. Sila sahkan e-mel anda terlebih dahulu kemudian log masuk semula.");return}data=signup.data;error=null}
-  if(error){alert("Log masuk tidak berjaya. Semak e-mel dan kata laluan.");return}
-  currentUserId=data.user.id;
-  let {data:prof,error:pe}=await supabaseClient.from("profiles").select("*").eq("id",currentUserId).maybeSingle();
-  if(pe){alert("Profil pengguna tidak dapat dibaca: "+pe.message);return}
-  if(!prof){await supabaseClient.from("profiles").insert({id:currentUserId,email,matric_no:matric,role:"mentor"});({data:prof}=await supabaseClient.from("profiles").select("*").eq("id",currentUserId).single())}
-  if(matric&&prof.matric_no!==matric){const u=await supabaseClient.from("profiles").update({matric_no:matric}).eq("id",currentUserId);if(u.error&&u.error.code!=="23505")console.warn(u.error.message)}
-  if(wantAdmin&&prof.role!=="admin"){await supabaseClient.auth.signOut();alert("Akaun ini bukan akaun Pentadbir.");return}
-  if(!wantAdmin&&prof.role==="admin"){ /* admins may still use mentor tab if desired, but default role follows DB */ }
-  await loadSupabaseState();setSession(email,matric||prof.matric_no||"",prof.role||"mentor");setupRealtime();
+async function ensureAnonymousSession(){
+  initialiseSupabaseWhenConfigured();
+  if(!supabaseClient) throw new Error("Sambungan sistem belum tersedia.");
+  const existing=await sbSession();
+  if(existing?.user) return existing;
+  const {data,error}=await supabaseClient.auth.signInAnonymously();
+  if(error){
+    if(String(error.message||"").toLowerCase().includes("anonymous") || error.code==="anonymous_provider_disabled"){
+      throw new Error("Anonymous Sign-Ins belum diaktifkan dalam Supabase Auth.");
+    }
+    throw error;
+  }
+  return data?.session||null;
 }
+
 async function mentorLogin(){
   const e=$("loginEmail").value.trim().toLowerCase();
   const m=$("loginMatric").value.trim().toUpperCase();
   if(!/^\S+@\S+\.\S+$/.test(e)){alert("Masukkan alamat e-mel yang sah.");return}
   if(!m){alert("Masukkan nombor matrik pelajar.");return}
-  initialiseSupabaseWhenConfigured();
-  if(!supabaseClient){alert("Sambungan sistem belum tersedia.");return}
-  storageSet("helaa_pending_mentor_matric",m);
-  storageSet("helaa_pending_mentor_email",e);
-  const redirectTo=window.location.origin+window.location.pathname+"?login=mentor";
-  const {error}=await supabaseClient.auth.signInWithOtp({
-    email:e,
-    options:{
-      shouldCreateUser:true,
-      emailRedirectTo:redirectTo,
-      data:{matric_no:m}
-    }
-  });
-  if(error){alert("Pautan log masuk tidak dapat dihantar: "+error.message);return}
-  alert("Pautan log masuk telah dihantar ke e-mel anda. Buka e-mel tersebut dan tekan pautan untuk masuk sebagai Mentor. Tiada kata laluan diperlukan.");
+  try{
+    const session=await ensureAnonymousSession();
+    if(!session?.user) throw new Error("Sesi pengguna tidak dapat diwujudkan.");
+    const {data,error}=await supabaseClient.rpc("claim_mentor_identity",{p_email:e,p_matric:m});
+    if(error) throw error;
+    if(data!==true) throw new Error("Identiti Mentor tidak dapat disahkan.");
+    storageSet("helaa_pending_mentor_matric",m);
+    storageSet("helaa_pending_mentor_email",e);
+    storageRemove("helaa_pending_admin_login");
+    window.location.reload();
+  }catch(err){
+    alert("Tidak dapat masuk sebagai Mentor: "+(err?.message||err));
+  }
 }
+
 async function adminLogin(){
   const e=$("adminEmail").value.trim().toLowerCase();
   const m=$("adminMatric").value.trim().toUpperCase();
   const code=$("adminPasscode").value.trim();
   if(!/^\S+@\S+\.\S+$/.test(e)){alert("Masukkan alamat e-mel Pentadbir yang sah.");return}
   if(!m){alert("Masukkan nombor matrik Pentadbir.");return}
-  if(code!=="1983"){alert("Code Pentadbir tidak tepat.");return}
-  initialiseSupabaseWhenConfigured();
-  if(!supabaseClient){alert("Sambungan sistem belum tersedia.");return}
-  storageSet("helaa_pending_admin_matric",m);
-  storageSet("helaa_pending_admin_email",e);
-  storageSet("helaa_pending_admin_login","1");
-  const redirectTo=window.location.origin+window.location.pathname+"?login=admin";
-  const {error}=await supabaseClient.auth.signInWithOtp({
-    email:e,
-    options:{shouldCreateUser:false,emailRedirectTo:redirectTo}
-  });
-  if(error){alert("Pautan log masuk Pentadbir tidak dapat dihantar. Pastikan e-mel ini telah didaftarkan sebagai Pentadbir.");return}
-  alert("Pautan log masuk telah dihantar ke e-mel Pentadbir. Buka e-mel tersebut dan tekan pautan untuk masuk. Tiada kata laluan diperlukan.");
+  if(!/^\d{4}$/.test(code)){alert("Masukkan code Pentadbir 4 digit.");return}
+  try{
+    const session=await ensureAnonymousSession();
+    if(!session?.user) throw new Error("Sesi Pentadbir tidak dapat diwujudkan.");
+    const {data,error}=await supabaseClient.rpc("claim_admin_access",{p_email:e,p_matric:m,p_code:code});
+    if(error) throw error;
+    if(data!==true){
+      await supabaseClient.auth.signOut();
+      alert("Code Pentadbir tidak tepat.");
+      return;
+    }
+    storageSet("helaa_pending_admin_matric",m);
+    storageSet("helaa_pending_admin_email",e);
+    storageSet("helaa_pending_admin_login","1");
+    storageRemove("helaa_pending_mentor_matric");
+    storageRemove("helaa_pending_mentor_email");
+    window.location.reload();
+  }catch(err){
+    try{await supabaseClient?.auth.signOut()}catch{}
+    alert("Tidak dapat masuk sebagai Pentadbir: "+(err?.message||err));
+  }
 }
 async function logout(){try{await supabaseClient?.auth.signOut()}catch{}currentUserId="";currentEmail="";currentMatric="";currentRole="";adminMode=false;storageRemove(KEYS.sessionEmail);storageRemove(KEYS.sessionMatric);storageRemove(KEYS.sessionRole);toggleSidebar(false);$("loginOverlay").classList.remove("hidden");document.querySelectorAll(".admin-only").forEach(el=>el.classList.add("hidden"));document.querySelectorAll(".mentor-only").forEach(el=>el.classList.remove("hidden"));$("adminNavBtn")?.classList.add("hidden");$("adminBookingsQuickNav")?.classList.add("hidden");$("currentUserLabel").textContent="-";$("sidebarUserLabel").textContent="-";$("heroUserPill").textContent="Belum log masuk";setLoginMode("mentor")}
 function refreshIdentity(){const d=adminMode?`Pentadbir • ${userDisplay()}`:userDisplay();$("currentUserLabel").textContent=d;$("sidebarUserLabel").textContent=d;$("heroUserPill").textContent=d;if(adminMode)$("adminIdentity").textContent=`${currentEmail} • ${currentMatric}`;$("backendStatus").textContent="Sistem Aktif";$("backendStatus").classList.add("online")}

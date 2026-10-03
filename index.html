@@ -1113,8 +1113,13 @@ async function saveMentorProfile(){
   currentMatric=matric;storageSet(KEYS.sessionMatric,currentMatric);bookings.filter(b=>b.email?.toLowerCase()===currentEmail).forEach(b=>{b.mentorName=fullName;b.mentorMatric=matric});saveAll();refreshIdentity();renderMentorProfile();renderMentorDirectory();notify("*admin*",`Profil mentor dikemas kini: ${fullName} (${matric}).`,"info","mentor_profile_updated");alert("Profil Mentor berjaya disimpan.")
 }
 function renderMentorDirectory(){
-  const finals=bookings.filter(isFinalStatus),emails=[...new Set(finals.map(b=>b.email?.toLowerCase()).filter(Boolean))];
-  const cards=emails.map(email=>{const p=profileByEmail(email),bs=finals.filter(b=>b.email?.toLowerCase()===email),fallback=bs[0];return {email,p,bs,name:p?.fullName||fallback?.mentorName||email,matric:p?.matric||fallback?.mentorMatric||"-"}});
+  const finals=bookings.filter(isFinalStatus);
+  const keys=[...new Set(finals.map(b=>b.userId||`matric:${b.mentorMatric||b.mentorName}`).filter(Boolean))];
+  const cards=keys.map(key=>{
+    const bs=finals.filter(b=>(b.userId||`matric:${b.mentorMatric||b.mentorName}`)===key),fallback=bs[0];
+    const p=mentorProfiles.find(x=>x.id===fallback?.userId) || mentorProfiles.find(x=>String(x.matric||"").toUpperCase()===String(fallback?.mentorMatric||"").toUpperCase());
+    return {p,bs,name:p?.fullName||fallback?.mentorName||"Mentor",matric:p?.matric||fallback?.mentorMatric||"-"};
+  });
   $("mentorDirectoryList").innerHTML=cards.length?cards.map(x=>`<article class="mentor-card"><div class="mentor-card-top"><img class="profile-photo" ${x.p?.photoKey?`data-file-key="${esc(x.p.photoKey)}"`:""} alt="Gambar mentor"><div><h4>${esc(x.name)}</h4><div class="matric">${esc(x.matric)}</div><div class="meta">${esc(x.p?.faculty||"Fakulti belum dilengkapkan")}<br>${esc(x.p?.course||"")}</div></div></div>${x.p?.about?`<p>${esc(x.p.about)}</p>`:""}<div class="tag-list">${(x.p?.subjects||[]).slice(0,6).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div><div class="service-count">${x.bs.length} sesi / tugasan mentor direkodkan</div></article>`).join(""):'<div class="empty">Belum ada mentor dengan tempahan yang diluluskan.</div>';
   hydrateStoredImages($("mentorDirectory"))
 }
@@ -1203,7 +1208,7 @@ function deleteReportRecord(id){
 }
 function renderApprovedReports(){
   const list=reports.filter(r=>r.status==="approved").sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));
-  $("approvedReportGallery").innerHTML=list.length?list.map(r=>{const b=bookings.find(x=>x.id===r.bookingId),s=slotById(b?.slotId),images=(r.attachments||[]).filter(a=>isImageType(a.type,a.name)),avg=(r.ratings||[]).length?((r.ratings.reduce((a,c)=>a+c,0))/r.ratings.length).toFixed(1):"-";if(!b)return"";return `<article class="report-story"><div class="report-cover">${images[0]?`<img data-file-key="${esc(images[0].key)}" alt="Aktiviti ${esc(bookingStudentName(b))}">`:`<span>Tiada gambar utama</span>`}</div><div class="report-body"><span class="approved-chip">LAPORAN DILULUSKAN</span><h3>${esc(bookingStudentName(b))}</h3><div class="meta">${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.subject)} • ${esc(s.group)}`:""}<br>Mentor: ${esc(b.mentorName)} • ${esc(b.mentorMatric||"-")}</div><div class="report-snippet"><b>Apa diajar:</b> ${esc(r.taught)}<br><b>Progress:</b> ${esc(r.progress)}</div><div class="rating-summary">★★★★★ <span>${avg}/5</span></div>${images.length>1?`<div class="report-thumbs">${images.slice(1,6).map(a=>`<img data-file-key="${esc(a.key)}" alt="Gambar aktiviti">`).join("")}</div>`:""}</div></article>`}).join(""):'<div class="empty">Belum ada laporan yang diluluskan.</div>';hydrateStoredImages($("approvedReportGallery"))
+  $("approvedReportGallery").innerHTML=list.length?list.map(r=>{const b=bookings.find(x=>x.id===r.bookingId),s=slotById(b?.slotId),images=(r.attachments||[]).filter(a=>isImageType(a.type,a.name)),avg=(r.ratings||[]).length?((r.ratings.reduce((a,c)=>a+c,0))/r.ratings.length).toFixed(1):"-";if(!b)return"";return `<article class="report-story"><div class="report-cover">${images[0]?`<img data-file-key="${esc(images[0].key)}" alt="Aktiviti ${esc(bookingStudentName(b))}">`:`<span>Tiada gambar utama</span>`}</div><div class="report-body"><span class="approved-chip">LAPORAN DILULUSKAN</span><h3>${esc(bookingStudentName(b))}</h3><div class="meta">${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.subject)} • ${esc(s.group)}`:""}<br>Mentor: ${esc(b.mentorName)} • ${esc(b.mentorMatric||"-")}</div><div class="report-snippet"><b>Apa diajar:</b> ${esc(r.taught)}<br><b>Progress:</b> ${esc(r.progress)}<br><b>Reaksi / kefahaman:</b> ${esc(r.reaction||"-")}<br><b>Perlu perhatian:</b> ${esc(r.attention||"-")}<br><b>Cadangan sesi seterusnya:</b> ${esc(r.next||"-")}</div><div class="rating-summary">★★★★★ <span>${avg}/5</span></div>${images.length>1?`<div class="report-thumbs">${images.slice(1,6).map(a=>`<img data-file-key="${esc(a.key)}" alt="Gambar aktiviti">`).join("")}</div>`:""}</div></article>`}).join(""):'<div class="empty">Belum ada laporan yang diluluskan.</div>';hydrateStoredImages($("approvedReportGallery"))
 }
 
 // ---------- Teaching materials ----------
@@ -1292,15 +1297,28 @@ function mapProfile(r){return {id:r.id,email:r.email||"",fullName:r.full_name||"
 function mapMentee(r){return {id:r.id,name:r.full_name||r.short_name||"",shortName:r.short_name||"",group:r.group_name,summary:r.description||"",photoKey:r.photo_path?sbFileKey("mentee-photos",r.photo_path):""}}
 function mapSlot(r){return {id:r.id,date:r.class_date,day:scheduleDayName(r.class_date),time:r.time_label,subject:r.subject,group:r.group_name,mode:r.mode||"individual",topic:r.topic||""}}
 function mapBooking(r){const s=slotById(r.slot_id);return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:r.mentor_email||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:r.allow_reassignment?"yes":"no",mentorNote:r.mentor_note||"",adminNote:r.admin_note||"",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at}}
+function mapPublicBooking(r){
+  const s=slotById(r.slot_id);
+  return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:"no",mentorNote:"",adminNote:"",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at};
+}
 function mapReport(r,atts){return {id:r.id,bookingId:r.booking_id,taught:r.taught||"",progress:r.progress||"",reaction:r.reaction||"",attention:r.attention||"",next:r.next_session||"",ratings:[r.rating_focus||0,r.rating_understanding||0,r.rating_communication||0,r.rating_motivation||0,r.rating_rukaiyah||0],status:r.status,adminNote:r.admin_feedback||"",createdAt:r.submitted_at,updatedAt:r.updated_at,attachments:(atts||[]).filter(a=>a.report_id===r.id).map(a=>({id:a.id,key:sbFileKey("report-files",a.storage_path),name:a.file_name,type:a.mime_type||"application/octet-stream"}))}}
 
 async function loadSupabaseState(){
   if(!supabaseClient||supabaseLoading)return;supabaseLoading=true;
   try{
-    const [p,m,s,b,r,ra,ma,mf,n]=await Promise.all([
-      supabaseClient.from("profiles").select("*"),supabaseClient.from("mentees").select("*").eq("active",true),supabaseClient.from("schedule_slots").select("*").eq("active",true),supabaseClient.from("bookings").select("*"),supabaseClient.from("reports").select("*"),supabaseClient.from("report_attachments").select("*"),supabaseClient.from("materials").select("*"),supabaseClient.from("material_files").select("*"),supabaseClient.from("notifications").select("*").order("created_at",{ascending:false})
+    const [p,m,s,b,r,ra,ma,mf,n,pb]=await Promise.all([
+      supabaseClient.from("profiles").select("*"),
+      supabaseClient.from("mentees").select("*").eq("active",true),
+      supabaseClient.from("schedule_slots").select("*").eq("active",true),
+      supabaseClient.from("bookings").select("*"),
+      supabaseClient.from("reports").select("*"),
+      supabaseClient.from("report_attachments").select("*"),
+      supabaseClient.from("materials").select("*"),
+      supabaseClient.from("material_files").select("*"),
+      supabaseClient.from("notifications").select("*").order("created_at",{ascending:false}),
+      supabaseClient.rpc("mentor_public_booking_snapshot")
     ]);
-    for(const x of [p,m,s,b,r,ra,ma,mf,n])if(x.error)console.warn("Supabase load:",x.error.message);
+    for(const x of [p,m,s,b,r,ra,ma,mf,n,pb])if(x.error)console.warn("Supabase load:",x.error.message);
     if(p.data){
       const mapped=p.data.map(mapProfile).sort((a,b)=>String(b.updatedAt||"").localeCompare(String(a.updatedAt||"")));
       const seen=new Set();
@@ -1308,7 +1326,14 @@ async function loadSupabaseState(){
     }
     if(m.data)students=m.data.map(mapMentee);
     if(s.data&&s.data.length){SCHEDULE=s.data.map(mapSlot).sort(scheduleSort);if(!SCHEDULE.some(x=>x.date===selectedDate))selectedDate=SCHEDULE[0]?.date||""}
-    if(b.data)bookings=b.data.map(mapBooking);
+    if(adminMode){
+      if(b.data)bookings=b.data.map(mapBooking);
+    }else{
+      const merged=new Map();
+      (pb.data||[]).map(mapPublicBooking).forEach(x=>merged.set(x.id,x));
+      (b.data||[]).map(mapBooking).forEach(x=>merged.set(x.id,x));
+      bookings=[...merged.values()];
+    }
     if(r.data)reports=r.data.map(x=>mapReport(x,ra.data||[]));
     if(ma.data)materials=ma.data.map(x=>({id:x.id,slotId:x.slot_id,title:x.title||"",note:x.note||"",updatedAt:x.updated_at,materialFiles:(mf.data||[]).filter(f=>f.material_id===x.id&&f.file_kind==="teaching").map(f=>({id:f.id,key:sbFileKey("teaching-materials",f.storage_path),name:f.file_name,type:f.mime_type||"application/octet-stream"})),schemeFiles:(mf.data||[]).filter(f=>f.material_id===x.id&&f.file_kind==="scheme").map(f=>({id:f.id,key:sbFileKey("answer-schemes",f.storage_path),name:f.file_name,type:f.mime_type||"application/octet-stream"})),noteFiles:(mf.data||[]).filter(f=>f.material_id===x.id&&f.file_kind==="note").map(f=>({id:f.id,key:sbFileKey("teaching-materials",f.storage_path),name:f.file_name,type:f.mime_type||"application/octet-stream"}))}));
     if(n.data)notifications=n.data.map(x=>({id:x.id,target:x.audience==="admin"?"*admin*":x.user_id===currentUserId?currentEmail:"*",message:x.message,title:x.title,type:"info",event:x.link_type||"notification",bookingId:x.link_type==="booking"?x.link_id:null,read:x.is_read,createdAt:x.created_at}));
