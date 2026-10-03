@@ -845,7 +845,116 @@ async function saveMentorProfile(){const fullName=$("mentorProfileName").value.t
 async function saveScheduleItem(){if(!adminMode)return;const date=$("scheduleDate").value,time=$("scheduleTime").value.trim(),subject=$("scheduleSubject").value.trim(),group=$("scheduleGroup").value,mode=$("scheduleMode").value,topic=$("scheduleTopic").value.trim();if(!date||!time||!subject||!group){alert("Lengkapkan semua ruangan wajib jadual.");return}const payload={class_date:date,time_label:time,subject,group_name:group,mode:mode==="pksk"?"pksk":"individual",topic:topic||null,active:true,created_by:currentUserId};let q=scheduleEditId?supabaseClient.from("schedule_slots").update(payload).eq("id",scheduleEditId):supabaseClient.from("schedule_slots").insert(payload);const {error}=await q;if(error){alert(error.message);return}selectedDate=date;cancelScheduleEdit();await loadSupabaseState();alert("Jadual berjaya disimpan.")}
 async function deleteScheduleItem(id){const s=slotById(id);if(!adminMode||!s||!confirm(`Padam slot ${s.subject} • ${s.group}?`))return;const {error}=await supabaseClient.from("schedule_slots").delete().eq("id",id);if(error){alert("Slot tidak dapat dipadam jika mempunyai rekod berkaitan. "+error.message);return}await loadSupabaseState()}
 
-async function saveMaterialSet(){if(!adminMode)return;const sid=$("materialSlot").value,old=materialEditId?materials.find(m=>m.id===materialEditId):materials.find(m=>m.slotId===sid),title=$("materialTitle").value.trim(),note=$("materialNote").value.trim();let mid=old?.id;if(mid){const {error}=await supabaseClient.from("materials").update({slot_id:sid,title,note}).eq("id",mid);if(error){alert(error.message);return}}else{const {data,error}=await supabaseClient.from("materials").insert({slot_id:sid,title,note,created_by:currentUserId}).select().single();if(error){alert(error.message);return}mid=data.id}const groups=[[...$("materialFiles").files,"teaching","teaching-materials"],[...$("schemeFiles").files,"scheme","answer-schemes"],[...$("noteFiles").files,"note","teaching-materials"]];for(const [files,kind,bucket] of groups){for(const f of files){const path=`materials/${mid}/${kind}/${Date.now()}-${uid()}-${cleanFileName(f.name)}`;try{await uploadSb(bucket,path,f);const ins=await supabaseClient.from("material_files").insert({material_id:mid,file_kind:kind,file_name:f.name,storage_path:path,mime_type:f.type||"application/octet-stream"});if(ins.error)throw ins.error}catch(e){alert(`Gagal upload ${f.name}: ${e.message}`);return}}}cancelMaterialEdit();await loadSupabaseState();speakThanks();alert("Bahan, nota dan skema berjaya disimpan.")}
+async function saveMaterialSet(){
+  if(!adminMode){alert("Akses Pentadbir diperlukan.");return}
+  if(!supabaseClient){alert("Sambungan pangkalan data belum tersedia.");return}
+
+  const sid=$("materialSlot").value;
+  const old=materialEditId?materials.find(m=>m.id===materialEditId):materials.find(m=>m.slotId===sid);
+  const title=$("materialTitle").value.trim();
+  const note=$("materialNote").value.trim();
+
+  const teachingFiles=Array.from($("materialFiles").files||[]);
+  const schemeFiles=Array.from($("schemeFiles").files||[]);
+  const noteFiles=Array.from($("noteFiles").files||[]);
+  const existingCount=old
+    ? materialFilesNormalized(old,"material").length
+      + materialFilesNormalized(old,"scheme").length
+      + materialFilesNormalized(old,"note").length
+    : 0;
+
+  if(!existingCount && !teachingFiles.length && !schemeFiles.length && !noteFiles.length && !note){
+    alert("Pilih sekurang-kurangnya satu fail atau masukkan nota.");
+    return;
+  }
+
+  let mid=old?.id||null;
+  let createdNew=false;
+  const uploaded=[];
+
+  try{
+    if(mid){
+      const {error}=await supabaseClient
+        .from("materials")
+        .update({slot_id:sid,title,note})
+        .eq("id",mid);
+      if(error)throw error;
+    }else{
+      const {data,error}=await supabaseClient
+        .from("materials")
+        .insert({slot_id:sid,title,note,created_by:currentUserId})
+        .select()
+        .single();
+      if(error)throw error;
+      mid=data.id;
+      createdNew=true;
+    }
+
+    const groups=[
+      [teachingFiles,"teaching","teaching-materials"],
+      [schemeFiles,"scheme","answer-schemes"],
+      [noteFiles,"note","teaching-materials"]
+    ];
+
+    for(const [files,kind,bucket] of groups){
+      for(const f of files){
+        const path=`materials/${mid}/${kind}/${Date.now()}-${uid()}-${cleanFileName(f.name)}`;
+
+        await uploadSb(bucket,path,f);
+        uploaded.push({bucket,path});
+
+        const {error:insertError}=await supabaseClient
+          .from("material_files")
+          .insert({
+            material_id:mid,
+            file_kind:kind,
+            file_name:f.name,
+            storage_path:path,
+            mime_type:f.type||"application/octet-stream"
+          });
+        if(insertError)throw insertError;
+
+        // Read-access verification without downloading the whole PDF again.
+        const {data:signed,error:signedError}=await supabaseClient
+          .storage
+          .from(bucket)
+          .createSignedUrl(path,60);
+        if(signedError||!signed?.signedUrl){
+          throw signedError||new Error(`Fail ${f.name} tidak dapat dibaca semula dari Storage.`);
+        }
+      }
+    }
+
+    cancelMaterialEdit();
+    await loadSupabaseState();
+
+    const saved=materials.find(m=>m.id===mid);
+    const savedCount=saved
+      ? materialFilesNormalized(saved,"material").length
+        + materialFilesNormalized(saved,"scheme").length
+        + materialFilesNormalized(saved,"note").length
+      : 0;
+
+    const expectedMinimum=existingCount+teachingFiles.length+schemeFiles.length+noteFiles.length;
+    if(savedCount<expectedMinimum){
+      throw new Error("Rekod fail belum lengkap selepas dimuat semula. Sila cuba sekali lagi.");
+    }
+
+    speakThanks();
+    alert(`Bahan berjaya disimpan. ${savedCount} fail tersedia untuk Mentor dan Pentadbir.`);
+  }catch(e){
+    // Roll back new uploads so a failed attempt never leaves another empty card.
+    for(const u of uploaded){
+      try{await supabaseClient.storage.from(u.bucket).remove([u.path])}catch{}
+      try{await supabaseClient.from("material_files").delete().eq("storage_path",u.path)}catch{}
+    }
+    if(createdNew && mid){
+      try{await supabaseClient.from("materials").delete().eq("id",mid)}catch{}
+    }
+    await loadSupabaseState().catch(()=>{});
+    alert(`Bahan tidak disimpan kerana upload gagal: ${e?.message||e}`);
+  }
+}
 async function removeMaterialFile(id,kind,key){const p=parseSbFileKey(key),m=materials.find(x=>x.id===id);if(!p||!m||!confirm("Buang fail ini?"))return;const all=[...materialFilesNormalized(m,"material"),...materialFilesNormalized(m,"scheme"),...materialFilesNormalized(m,"note")],f=all.find(x=>x.key===key);try{await deleteSbFile(key);if(f?.id)await supabaseClient.from("material_files").delete().eq("id",f.id);await loadSupabaseState()}catch(e){alert(e.message)}}
 async function deleteMaterial(id){if(!confirm("Padam rekod bahan ini?"))return;const m=materials.find(x=>x.id===id);if(m){for(const f of [...materialFilesNormalized(m,"material"),...materialFilesNormalized(m,"scheme"),...materialFilesNormalized(m,"note")]){try{await deleteSbFile(f.key)}catch{}}}const {error}=await supabaseClient.from("materials").delete().eq("id",id);if(error){alert(error.message);return}cancelMaterialEdit();await loadSupabaseState()}
 
@@ -861,7 +970,7 @@ async function markAllNotificationsRead(){const ids=currentNotifications().filte
 async function markAllAdminNotificationsRead(){const ids=notifications.filter(n=>n.target==="*admin*"&&!n.read).map(n=>n.id);if(ids.length)await supabaseClient.from("notifications").update({is_read:true}).in("id",ids);await loadSupabaseState()}
 async function openNotification(id){const n=notifications.find(x=>x.id===id);if(!n)return;await supabaseClient.from("notifications").update({is_read:true}).eq("id",id);n.read=true;renderNotifications();$("notificationPopover")?.classList.remove("open");const bookingId=notificationBookingId(n);if(bookingId){notificationFocusBookingId=bookingId;if(adminMode){activeReviewBookingId=bookingId;if($("statusFilter"))$("statusFilter").value="all";if($("adminSearch"))$("adminSearch").value="";switchTab("admin");switchAdminPane("bookings");renderAdminBookings();setTimeout(()=>document.getElementById(`admin-booking-${bookingId}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80)}else{setMentorBookingFilter("all");switchTab("mybooking");renderMyBookings()}return}if(n.event==="report"){if(adminMode){switchTab("admin");switchAdminPane("adminReports")}else switchTab("reports")}}
 
-function setupRealtime(){if(!supabaseClient||realtimeChannel)return;realtimeChannel=supabaseClient.channel("helaa-rukaiyah-live").on("postgres_changes",{event:"*",schema:"public",table:"bookings"},()=>loadSupabaseState()).on("postgres_changes",{event:"*",schema:"public",table:"notifications"},()=>loadSupabaseState()).on("postgres_changes",{event:"*",schema:"public",table:"schedule_slots"},()=>loadSupabaseState()).subscribe()}
+function setupRealtime(){if(!supabaseClient||realtimeChannel)return;const refresh=()=>loadSupabaseState();realtimeChannel=supabaseClient.channel("helaa-rukaiyah-live").on("postgres_changes",{event:"*",schema:"public",table:"bookings"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"notifications"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"schedule_slots"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"materials"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"material_files"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentees"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"reports"},refresh).subscribe()}
 
 async function init(){
   try{
