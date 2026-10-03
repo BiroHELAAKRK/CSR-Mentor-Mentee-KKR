@@ -167,8 +167,8 @@ button{cursor:pointer}
         <input id="loginEmail" type="email" placeholder="nama@email.com" autocomplete="email" required />
         <label>Nombor Matrik Pelajar *</label>
         <input id="loginMatric" type="text" placeholder="Contoh: A123456" autocomplete="off" required />
-        <div class="login-hint">Tiada kata laluan diperlukan. Pautan log masuk selamat akan dihantar ke e-mel anda.</div>
-        <button id="mentorLoginButton" class="primary wide" type="submit">Hantar Pautan Log Masuk Mentor</button>
+        <div class="login-hint">Masukkan e-mel dan nombor matrik untuk terus masuk.</div>
+        <button id="mentorLoginButton" class="primary wide" type="submit">Masuk sebagai Mentor</button>
       </form>
 
       <form id="adminLoginPane" class="login-pane" onsubmit="event.preventDefault(); adminLogin();">
@@ -177,9 +177,9 @@ button{cursor:pointer}
         <label>Nombor Matrik Pelajar *</label>
         <input id="adminMatric" type="text" placeholder="Contoh: A123456" autocomplete="off" required />
         <label>Code Pentadbir *</label>
-        <input id="adminPasscode" type="password" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="Masukkan code Pentadbir" required />
-        <div class="login-hint">Tiada kata laluan diperlukan. Selepas code disahkan, pautan log masuk selamat akan dihantar ke e-mel Pentadbir.</div>
-        <button id="adminLoginButton" class="primary wide" type="submit">Hantar Pautan Log Masuk Pentadbir</button>
+        <input id="adminPasscode" type="text" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]{4}" placeholder="Masukkan code 4 digit" required />
+        <div class="login-hint">Masukkan e-mel, nombor matrik dan code Pentadbir untuk terus masuk.</div>
+        <button id="adminLoginButton" class="primary wide" type="submit">Masuk sebagai Pentadbir</button>
       </form>
 
       <div class="login-hint">Data akaun, tempahan, jadual dan fail diselaraskan melalui pangkalan data HELAA Rukaiyah.</div>
@@ -675,7 +675,6 @@ const DEFAULT_SCHEDULE = [
   {id:"20261011-pksk",date:"2026-10-11",day:"Ahad",time:"8.00 PM - 10.15 PM*",subject:"Persediaan PKSK",group:"Tahun 6",mode:"pksk",topic:"Karangan"}
 ];
 
-const ADMIN_CODES = ["1983"];
 const RATING_LABELS = [
   "Fokus dan kerjasama mentee",
   "Tahap kefahaman mentee",
@@ -1302,7 +1301,11 @@ async function loadSupabaseState(){
       supabaseClient.from("profiles").select("*"),supabaseClient.from("mentees").select("*").eq("active",true),supabaseClient.from("schedule_slots").select("*").eq("active",true),supabaseClient.from("bookings").select("*"),supabaseClient.from("reports").select("*"),supabaseClient.from("report_attachments").select("*"),supabaseClient.from("materials").select("*"),supabaseClient.from("material_files").select("*"),supabaseClient.from("notifications").select("*").order("created_at",{ascending:false})
     ]);
     for(const x of [p,m,s,b,r,ra,ma,mf,n])if(x.error)console.warn("Supabase load:",x.error.message);
-    if(p.data)mentorProfiles=p.data.map(mapProfile);
+    if(p.data){
+      const mapped=p.data.map(mapProfile).sort((a,b)=>String(b.updatedAt||"").localeCompare(String(a.updatedAt||"")));
+      const seen=new Set();
+      mentorProfiles=mapped.filter(x=>{const k=`${String(x.email||"").toLowerCase()}|${String(x.matric||"").toUpperCase()}`;if(!x.email&&!x.matric)return true;if(seen.has(k))return false;seen.add(k);return true});
+    }
     if(m.data)students=m.data.map(mapMentee);
     if(s.data&&s.data.length){SCHEDULE=s.data.map(mapSlot).sort(scheduleSort);if(!SCHEDULE.some(x=>x.date===selectedDate))selectedDate=SCHEDULE[0]?.date||""}
     if(b.data)bookings=b.data.map(mapBooking);
@@ -1315,60 +1318,68 @@ async function loadSupabaseState(){
 async function pushNotification({userId=null,audience="user",message,title="HELAA KRK",linkType=null,linkId=null}){if(!supabaseClient)return;const {error}=await supabaseClient.from("notifications").insert({user_id:userId,audience,title,message,link_type:linkType,link_id:linkId});if(error)console.warn("Notification:",error.message)}
 function notify(target,message,type="info",event="notification",meta={}){const local={id:uid(),target,message,type,event,read:false,createdAt:new Date().toISOString(),...meta};notifications.unshift(local);renderNotifications();updateNotifCounts();(async()=>{if(!supabaseClient)return;let audience="user",userId=null;if(target==="*admin*")audience="admin";else if(target==="*"){return}else{const b=meta.bookingId?bookings.find(x=>x.id===meta.bookingId):null;userId=b?.userId||mentorProfiles.find(p=>p.email.toLowerCase()===String(target).toLowerCase())?.id||null;if(!userId)return}await pushNotification({userId,audience,message,linkType:meta.kind==="booking"||String(event).startsWith("booking_")?"booking":String(event).startsWith("report_")?"report":event,linkId:meta.bookingId||null});await loadSupabaseState()})()}
 
-async function authenticateAndEnter(email,password,matric,wantAdmin=false){
-  initialiseSupabaseWhenConfigured();if(!supabaseClient){alert("Sambungan sistem belum tersedia.");return}
-  let {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
-  if(error&&!wantAdmin){const signup=await supabaseClient.auth.signUp({email,password,options:{data:{matric_no:matric}}});if(signup.error){alert("Log masuk tidak berjaya: "+error.message);return}if(!signup.data.session){alert("Akaun Mentor telah didaftarkan. Sila sahkan e-mel anda terlebih dahulu kemudian log masuk semula.");return}data=signup.data;error=null}
-  if(error){alert("Log masuk tidak berjaya. Semak e-mel dan kata laluan.");return}
-  currentUserId=data.user.id;
-  let {data:prof,error:pe}=await supabaseClient.from("profiles").select("*").eq("id",currentUserId).maybeSingle();
-  if(pe){alert("Profil pengguna tidak dapat dibaca: "+pe.message);return}
-  if(!prof){await supabaseClient.from("profiles").insert({id:currentUserId,email,matric_no:matric,role:"mentor"});({data:prof}=await supabaseClient.from("profiles").select("*").eq("id",currentUserId).single())}
-  if(matric&&prof.matric_no!==matric){const u=await supabaseClient.from("profiles").update({matric_no:matric}).eq("id",currentUserId);if(u.error&&u.error.code!=="23505")console.warn(u.error.message)}
-  if(wantAdmin&&prof.role!=="admin"){await supabaseClient.auth.signOut();alert("Akaun ini bukan akaun Pentadbir.");return}
-  if(!wantAdmin&&prof.role==="admin"){ /* admins may still use mentor tab if desired, but default role follows DB */ }
-  await loadSupabaseState();setSession(email,matric||prof.matric_no||"",prof.role||"mentor");setupRealtime();
+async function ensureAnonymousSession(){
+  initialiseSupabaseWhenConfigured();
+  if(!supabaseClient) throw new Error("Sambungan sistem belum tersedia.");
+  const existing=await sbSession();
+  if(existing?.user) return existing;
+  const {data,error}=await supabaseClient.auth.signInAnonymously();
+  if(error){
+    if(String(error.message||"").toLowerCase().includes("anonymous") || error.code==="anonymous_provider_disabled"){
+      throw new Error("Anonymous Sign-Ins belum diaktifkan dalam Supabase Auth.");
+    }
+    throw error;
+  }
+  return data?.session||null;
 }
+
 async function mentorLogin(){
   const e=$("loginEmail").value.trim().toLowerCase();
   const m=$("loginMatric").value.trim().toUpperCase();
   if(!/^\S+@\S+\.\S+$/.test(e)){alert("Masukkan alamat e-mel yang sah.");return}
   if(!m){alert("Masukkan nombor matrik pelajar.");return}
-  initialiseSupabaseWhenConfigured();
-  if(!supabaseClient){alert("Sambungan sistem belum tersedia.");return}
-  storageSet("helaa_pending_mentor_matric",m);
-  storageSet("helaa_pending_mentor_email",e);
-  const redirectTo=window.location.origin+window.location.pathname+"?login=mentor";
-  const {error}=await supabaseClient.auth.signInWithOtp({
-    email:e,
-    options:{
-      shouldCreateUser:true,
-      emailRedirectTo:redirectTo,
-      data:{matric_no:m}
-    }
-  });
-  if(error){alert("Pautan log masuk tidak dapat dihantar: "+error.message);return}
-  alert("Pautan log masuk telah dihantar ke e-mel anda. Buka e-mel tersebut dan tekan pautan untuk masuk sebagai Mentor. Tiada kata laluan diperlukan.");
+  try{
+    const session=await ensureAnonymousSession();
+    if(!session?.user) throw new Error("Sesi pengguna tidak dapat diwujudkan.");
+    const {data,error}=await supabaseClient.rpc("claim_mentor_identity",{p_email:e,p_matric:m});
+    if(error) throw error;
+    if(data!==true) throw new Error("Identiti Mentor tidak dapat disahkan.");
+    storageSet("helaa_pending_mentor_matric",m);
+    storageSet("helaa_pending_mentor_email",e);
+    storageRemove("helaa_pending_admin_login");
+    window.location.reload();
+  }catch(err){
+    alert("Tidak dapat masuk sebagai Mentor: "+(err?.message||err));
+  }
 }
+
 async function adminLogin(){
   const e=$("adminEmail").value.trim().toLowerCase();
   const m=$("adminMatric").value.trim().toUpperCase();
   const code=$("adminPasscode").value.trim();
   if(!/^\S+@\S+\.\S+$/.test(e)){alert("Masukkan alamat e-mel Pentadbir yang sah.");return}
   if(!m){alert("Masukkan nombor matrik Pentadbir.");return}
-  if(code!=="1983"){alert("Code Pentadbir tidak tepat.");return}
-  initialiseSupabaseWhenConfigured();
-  if(!supabaseClient){alert("Sambungan sistem belum tersedia.");return}
-  storageSet("helaa_pending_admin_matric",m);
-  storageSet("helaa_pending_admin_email",e);
-  storageSet("helaa_pending_admin_login","1");
-  const redirectTo=window.location.origin+window.location.pathname+"?login=admin";
-  const {error}=await supabaseClient.auth.signInWithOtp({
-    email:e,
-    options:{shouldCreateUser:false,emailRedirectTo:redirectTo}
-  });
-  if(error){alert("Pautan log masuk Pentadbir tidak dapat dihantar. Pastikan e-mel ini telah didaftarkan sebagai Pentadbir.");return}
-  alert("Pautan log masuk telah dihantar ke e-mel Pentadbir. Buka e-mel tersebut dan tekan pautan untuk masuk. Tiada kata laluan diperlukan.");
+  if(!/^\d{4}$/.test(code)){alert("Masukkan code Pentadbir 4 digit.");return}
+  try{
+    const session=await ensureAnonymousSession();
+    if(!session?.user) throw new Error("Sesi Pentadbir tidak dapat diwujudkan.");
+    const {data,error}=await supabaseClient.rpc("claim_admin_access",{p_email:e,p_matric:m,p_code:code});
+    if(error) throw error;
+    if(data!==true){
+      await supabaseClient.auth.signOut();
+      alert("Code Pentadbir tidak tepat.");
+      return;
+    }
+    storageSet("helaa_pending_admin_matric",m);
+    storageSet("helaa_pending_admin_email",e);
+    storageSet("helaa_pending_admin_login","1");
+    storageRemove("helaa_pending_mentor_matric");
+    storageRemove("helaa_pending_mentor_email");
+    window.location.reload();
+  }catch(err){
+    try{await supabaseClient?.auth.signOut()}catch{}
+    alert("Tidak dapat masuk sebagai Pentadbir: "+(err?.message||err));
+  }
 }
 async function logout(){try{await supabaseClient?.auth.signOut()}catch{}currentUserId="";currentEmail="";currentMatric="";currentRole="";adminMode=false;storageRemove(KEYS.sessionEmail);storageRemove(KEYS.sessionMatric);storageRemove(KEYS.sessionRole);toggleSidebar(false);$("loginOverlay").classList.remove("hidden");document.querySelectorAll(".admin-only").forEach(el=>el.classList.add("hidden"));document.querySelectorAll(".mentor-only").forEach(el=>el.classList.remove("hidden"));$("adminNavBtn")?.classList.add("hidden");$("adminBookingsQuickNav")?.classList.add("hidden");$("currentUserLabel").textContent="-";$("sidebarUserLabel").textContent="-";$("heroUserPill").textContent="Belum log masuk";setLoginMode("mentor")}
 function refreshIdentity(){const d=adminMode?`Pentadbir • ${userDisplay()}`:userDisplay();$("currentUserLabel").textContent=d;$("sidebarUserLabel").textContent=d;$("heroUserPill").textContent=d;if(adminMode)$("adminIdentity").textContent=`${currentEmail} • ${currentMatric}`;$("backendStatus").textContent="Sistem Aktif";$("backendStatus").classList.add("online")}
