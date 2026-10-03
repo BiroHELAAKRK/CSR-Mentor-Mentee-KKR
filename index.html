@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#315B7D" />
   <title>HELAA KRK | Sistem Mentor-Mentee Rukaiyah</title>
-  <link rel="stylesheet" href="style.css?v=7.0.0" />
+  <link rel="stylesheet" href="style.css?v=8.0.0" />
 </head>
 <body>
   <div id="loginOverlay" class="login-overlay">
@@ -99,15 +99,7 @@
       <div class="nav-label admin-only hidden">Pentadbiran</div>
       <button data-tab="admin" id="adminNavBtn" class="hidden"><span>Dashboard Pentadbir</span></button>
     </nav>
-    <div class="sidebar-sdg-static" aria-label="SDG berkaitan program">
-      <div class="nav-label">SDG Berkaitan Program</div>
-      <div class="sdg-mini-row">
-        <div class="sdg-mini sdg3-mini"><b>SDG 3</b><span>Kesihatan Baik & Kesejahteraan</span></div>
-        <div class="sdg-mini sdg1-mini"><b>SDG 1</b><span>Tiada Kemiskinan</span></div>
-        <div class="sdg-mini sdg4-mini"><b>SDG 4</b><span>Pendidikan Berkualiti</span></div>
-      </div>
-    </div>
-    <div class="sidebar-footer"><button class="ghost wide" type="button" onclick="logout()">Log Keluar / Tukar Akaun</button></div>
+    <div class="sidebar-footer"><button class="ghost wide" onclick="logout()">Log Keluar / Tukar Akaun</button></div>
   </aside>
 
   <main class="wrap app-main">
@@ -193,7 +185,7 @@
             <div class="full-row"><label>Subjek yang boleh diajar *</label><div id="subjectCheckboxes" class="check-grid"></div></div>
             <div id="otherSubjectWrap" class="full-row hidden"><label>Lain-lain, nyatakan</label><input id="otherSubjectText" type="text" /></div>
             <div class="full-row"><label>Tahun / Tingkatan yang yakin untuk diajar *</label><div id="levelCheckboxes" class="check-grid levels"></div></div>
-            <div class="full-row"><button class="primary" onclick="saveMentorProfile()">Simpan Profil Mentor</button></div>
+            <div class="full-row"><button class="primary" type="button" onclick="saveMentorProfile()">Simpan Profil Mentor</button></div>
           </div>
         </div>
       </div>
@@ -256,14 +248,14 @@
 
       <div class="panel">
         <div class="admin-tabs">
-          <button class="active" data-admin="adminDashboard">Ringkasan</button>
-          <button data-admin="bookings">Tempahan</button>
-          <button data-admin="adminReports">Laporan</button>
-          <button data-admin="adminMaterials">Bahan Mengajar</button>
-          <button data-admin="adminSchedule">Pengurusan Jadual</button>
-          <button data-admin="adminMentees">Kenali Mentee</button>
-          <button data-admin="adminNotifications">Notifikasi</button>
-          <button data-admin="adminEmailSettings">Tetapan E-mel</button>
+          <button class="active" data-admin="adminDashboard" type="button" onclick="switchAdminPane('adminDashboard')">Ringkasan</button>
+          <button data-admin="bookings" type="button" onclick="switchAdminPane('bookings')">Permohonan Mentor</button>
+          <button data-admin="adminReports" type="button" onclick="switchAdminPane('adminReports')">Semakan Laporan</button>
+          <button data-admin="adminMaterials" type="button" onclick="switchAdminPane('adminMaterials')">Bahan Mengajar</button>
+          <button data-admin="adminSchedule" type="button" onclick="switchAdminPane('adminSchedule')">Pengurusan Jadual</button>
+          <button data-admin="adminMentees" type="button" onclick="switchAdminPane('adminMentees')">Kenali Mentee</button>
+          <button data-admin="adminNotifications" type="button" onclick="switchAdminPane('adminNotifications')">Notifikasi</button>
+          <button data-admin="adminEmailSettings" type="button" onclick="switchAdminPane('adminEmailSettings')">Tetapan E-mel</button>
         </div>
 
         <div id="adminDashboard" class="admin-pane active">
@@ -278,6 +270,7 @@
         </div>
 
         <div id="bookings" class="admin-pane">
+          <div class="notice info"><b>Permohonan Mentor:</b> Pentadbir boleh melihat semua permohonan, meluluskan, menolak, mengatur semula mentee, membuka semula kelulusan, menyunting butiran rekod atau memadam rekod jika perlu.</div>
           <div class="admin-toolbar">
             <div class="filters"><select id="statusFilter" onchange="renderAdminBookings()"><option value="all">Semua status</option><option value="pending">Menunggu</option><option value="approved">Diluluskan</option><option value="reassigned">Diatur semula</option><option value="rejected">Ditolak</option><option value="reverted">Dibuka semula</option></select><input id="adminSearch" placeholder="Cari mentor / mentee / matrik" oninput="renderAdminBookings()" /></div>
             <button class="ghost" onclick="copyWhatsAppSummary()">Salin Ringkasan WhatsApp</button>
@@ -286,6 +279,7 @@
         </div>
 
         <div id="adminReports" class="admin-pane">
+          <div class="notice info"><b>Semakan Laporan:</b> Pentadbir boleh meluluskan, memulangkan untuk pembetulan, tidak meluluskan, menyunting kandungan atau memadam laporan.</div>
           <div class="admin-toolbar"><div class="filters"><select id="reportStatusFilter" onchange="renderAdminReports()"><option value="all">Semua laporan</option><option value="pending">Menunggu Semakan</option><option value="approved">Diluluskan</option><option value="returned">Dipulangkan</option><option value="rejected">Tidak Diluluskan</option></select></div></div>
           <div id="adminReportList" class="cards"></div>
         </div>
@@ -299,11 +293,12 @@
             <div class="upload-zone"><label>Skema Jawapan (boleh pilih banyak fail)</label><input id="schemeFiles" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.webp" /></div>
             <div class="upload-zone full-row"><label>Fail Nota / Arahan Tambahan</label><input id="noteFiles" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.webp" /></div>
             <div class="full-row"><label>Nota / arahan kepada mentor</label><textarea id="materialNote" placeholder="Contoh: Fokus latihan muka surat 3 hingga 7."></textarea></div>
-            <div class="full-row actions"><button class="primary" onclick="saveMaterialSet()">Simpan / Kemas Kini</button><button id="cancelMaterialEditBtn" class="ghost hidden" onclick="cancelMaterialEdit()">Batal Edit</button></div>
+            <div class="full-row actions"><button class="primary" type="button" onclick="saveMaterialSet()">Simpan / Kemas Kini</button><button id="cancelMaterialEditBtn" class="ghost hidden" type="button" onclick="cancelMaterialEdit()">Batal Edit</button></div>
           </div>
           <div class="section-divider"></div>
           <div id="adminMaterialList" class="cards"></div>
         </div>
+
 
         <div id="adminSchedule" class="admin-pane">
           <div class="notice info"><b>Pengurusan Jadual:</b> Pentadbir boleh menambah, menyunting dan memadam slot kelas. Jadual baharu akan terus muncul pada paparan tempahan mentor.</div>
@@ -319,7 +314,6 @@
             <div class="full-row actions"><button class="primary" type="button" onclick="saveScheduleItem()">Simpan Jadual</button><button id="cancelScheduleEditBtn" class="ghost hidden" type="button" onclick="cancelScheduleEdit()">Batal Edit</button></div>
           </div>
           <div class="section-divider"></div>
-          <div class="section-head-row"><div><h3>Senarai Jadual Semasa</h3><p class="meta">Gunakan Edit atau Padam untuk mengurus slot yang telah diwujudkan.</p></div></div>
           <div id="adminScheduleList" class="cards"></div>
         </div>
 
@@ -347,19 +341,10 @@
         </div>
       </div>
     </section>
-    <section class="sdg-static-bottom" aria-label="Matlamat Pembangunan Mampan berkaitan">
-      <div class="eyebrow">Matlamat Pembangunan Mampan</div>
-      <h2>SDG yang Disokong</h2>
-      <div class="sdg-static-cards">
-        <article class="sdg-static-card sdg3-static"><b>SDG 3</b><span>Kesihatan Baik & Kesejahteraan</span></article>
-        <article class="sdg-static-card sdg1-static"><b>SDG 1</b><span>Tiada Kemiskinan</span></article>
-        <article class="sdg-static-card sdg4-static"><b>SDG 4</b><span>Pendidikan Berkualiti</span></article>
-      </div>
-    </section>
   </main>
 
   <footer class="site-footer">
-    <div class="wrap footer-inner"><div><b>HELAA KRK</b><br><span>Projek Komuniti Biro Hal Ehwal Luar, Alumni dan Antarabangsa Kolej Rahim Kajai UKM.</span></div><div class="footer-sdg"><span>SDG 3</span><span>SDG 1</span><span>SDG 4</span></div></div>
+    <div class="wrap footer-inner"><div><b>HELAA KRK</b><br><span>Projek Komuniti Biro Hal Ehwal Luar, Alumni dan Antarabangsa Kolej Rahim Kajai UKM.</span></div><div class="footer-sdg"><span>SDG 1</span><span>SDG 3</span><span>SDG 4</span></div></div>
   </footer>
 
   <div id="bookingModal" class="modal">
@@ -419,7 +404,7 @@
       <label>Nama ringkas *</label><input id="menteeEditName" type="text" />
       <label>Gambaran ringkas</label><textarea id="menteeEditSummary" placeholder="Contoh: Suka aktiviti visual, cepat faham apabila diberi contoh langkah demi langkah."></textarea>
       <label>Gambar mentee</label><input id="menteeEditPhoto" type="file" accept="image/*" />
-      <div class="actions modal-actions"><button class="ghost" onclick="closeModal('menteeEditModal')">Batal</button><button class="primary" onclick="saveMenteeProfile()">Simpan Perubahan</button></div>
+      <div class="actions modal-actions"><button class="ghost" onclick="closeModal('menteeEditModal')">Batal</button><button class="primary" type="button" onclick="saveMenteeProfile()">Simpan Perubahan</button></div>
     </div>
   </div>
 
@@ -435,6 +420,6 @@
       ap.classList.toggle('active',mode==='admin');
     };
   </script>
-  <script src="script.js?v=7.0.0"></script>
+  <script src="script.js?v=8.0.0"></script>
 </body>
 </html>
