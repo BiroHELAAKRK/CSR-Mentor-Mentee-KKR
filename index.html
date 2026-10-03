@@ -176,6 +176,13 @@ button{cursor:pointer}
   .mentor-service-record-head{align-items:flex-start}
 }
 
+/* v12.3 private mentor evaluation */
+.mentor-evaluation-private{margin-top:12px;padding:13px 14px;border:1px solid #d8e1e8;border-radius:14px;background:#f7fafc}
+.mentor-evaluation-private .score{font-size:22px;font-weight:950;color:#344d65}
+.mentor-evaluation-private .stars-inline{color:#f59e0b;font-weight:900;letter-spacing:.06em}
+.mentor-evaluation-private .comment{margin-top:7px;font-size:12px;line-height:1.55;color:#405168}
+.mentor-evaluation-private .privacy{margin-top:7px;font-size:10px;color:#667085;font-weight:700}
+
 </style>
 </head>
 <body>
@@ -575,6 +582,28 @@ button{cursor:pointer}
     </div>
   </div>
 
+  <div id="mentorEvaluationModal" class="modal">
+    <div class="modal-card small-modal">
+      <div class="modal-head">
+        <div><div class="eyebrow">Pentadbir</div><h3>Penilaian Mentor</h3></div>
+        <button class="close" type="button" onclick="closeModal('mentorEvaluationModal')">×</button>
+      </div>
+      <input id="mentorEvaluationReportId" type="hidden" />
+      <div id="mentorEvaluationSummary" class="booking-summary"></div>
+      <label>Skor Mentor (0.0 hingga 5.0) *</label>
+      <input id="mentorEvaluationScore" type="number" min="0" max="5" step="0.1" inputmode="decimal" placeholder="Contoh: 4.9" />
+      <div class="field-help">Gunakan satu tempat perpuluhan. Contoh: 4.8, 4.9 atau 5.0.</div>
+      <label>Komen Pentadbir *</label>
+      <textarea id="mentorEvaluationComment" placeholder="Contoh: Mentor sangat bersedia, komunikasi jelas dan berjaya menyesuaikan pendekatan dengan tahap mentee."></textarea>
+      <div class="privacy-note">Penilaian ini adalah sulit. Hanya Mentor berkenaan dan Pentadbir boleh melihatnya.</div>
+      <div class="actions modal-actions">
+        <button class="ghost" type="button" onclick="closeModal('mentorEvaluationModal')">Batal</button>
+        <button id="deleteMentorEvaluationBtn" class="danger hidden" type="button" onclick="deleteMentorEvaluation()">Padam Penilaian</button>
+        <button class="primary" type="button" onclick="saveMentorEvaluation()">Simpan Penilaian</button>
+      </div>
+    </div>
+  </div>
+
   <div id="reportModal" class="modal">
     <div class="modal-card report-modal-card">
       <div class="modal-head"><div><div class="eyebrow">Laporan Selepas Sesi</div><h3 id="reportModalTitle">Laporan Mentor</h3></div><button class="close" onclick="closeModal('reportModal')">×</button></div>
@@ -777,6 +806,7 @@ let notifications = loadWithFallback(KEYS.notifications,"helaa_rukaiyah_notifica
 let students = parseJSON(storageGet(KEYS.students),STUDENT_SEED.map(x=>({...x,summary:"",photoKey:""})));
 let mentorProfiles = parseJSON(storageGet(KEYS.profiles),[]);
 let mentorServiceRecords = [];
+let mentorEvaluations = [];
 let emailSettings = loadWithFallback(KEYS.emailSettings,"helaa_rukaiyah_email_settings_v3",{enabled:false,adminEmail:"",webhookUrl:""});
 let emailLog = loadWithFallback(KEYS.emailLog,"helaa_rukaiyah_email_log_v3",[]);
 let SCHEDULE = (()=>{
@@ -1372,7 +1402,7 @@ function renderRatingQuestions(){
 function setRating(i,v){reportRatings[i]=v;renderRatingQuestions()}
 function renderMentorReports(){
   const eligible=bookings.filter(b=>b.email?.toLowerCase()===currentEmail.toLowerCase()&&isFinalStatus(b)).sort((a,b)=>slotById(a.slotId)?.date.localeCompare(slotById(b.slotId)?.date||"")||0);
-  $("mentorReportList").innerHTML=eligible.length?eligible.map(b=>{const s=slotById(b.slotId),r=reports.find(x=>x.bookingId===b.id);return `<div class="card"><div class="card-top"><div><h4>${esc(s?.subject||"Sesi")}</h4><div class="meta">${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.group)}`:""}<br>Mentee: <b>${esc(bookingStudentName(b))}</b></div></div>${r?badge(r.status):'<span class="badge info">Belum Dihantar</span>'}</div>${r?.adminNote?`<div class="notice warn"><b>Catatan Pentadbir:</b> ${esc(r.adminNote)}</div>`:""}<div class="actions"><button class="primary" onclick="openReport('${b.id}')">${r?"Lihat / Edit Laporan":"Sediakan Laporan"}</button>${r?`<button class="secondary" type="button" onclick="printMentorReport('${r.id}')">Cetak Laporan</button>`:""}${r?.status==="approved"?`<span class="meta">Jika diedit, laporan perlu disemak semula.</span>`:""}</div></div>`}).join(""):'<div class="empty">Belum ada sesi yang diluluskan untuk laporan.</div>'
+  $("mentorReportList").innerHTML=eligible.length?eligible.map(b=>{const s=slotById(b.slotId),r=reports.find(x=>x.bookingId===b.id);return `<div class="card"><div class="card-top"><div><h4>${esc(s?.subject||"Sesi")}</h4><div class="meta">${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.group)}`:""}<br>Mentee: <b>${esc(bookingStudentName(b))}</b></div></div>${r?badge(r.status):'<span class="badge info">Belum Dihantar</span>'}</div>${r?.adminNote?`<div class="notice warn"><b>Catatan Pentadbir:</b> ${esc(r.adminNote)}</div>`:""}${r?mentorEvaluationMarkup(r.id):""}<div class="actions"><button class="primary" onclick="openReport('${b.id}')">${r?"Lihat / Edit Laporan":"Sediakan Laporan"}</button>${r?`<button class="secondary" type="button" onclick="printMentorReport('${r.id}')">Cetak Laporan</button>`:""}${r?.status==="approved"?`<span class="meta">Jika diedit, laporan perlu disemak semula.</span>`:""}</div></div>`}).join(""):'<div class="empty">Belum ada sesi yang diluluskan untuk laporan.</div>'
 }
 function openReport(bookingId){
   const b=bookings.find(x=>x.id===bookingId),s=slotById(b?.slotId);if(!b||!s)return;
@@ -1399,7 +1429,7 @@ function reportAttachmentMarkup(r,editable=false){
 }
 function renderAdminReports(){
   if(!adminMode)return;const filter=$("reportStatusFilter").value,list=reports.filter(r=>filter==="all"||r.status===filter);
-  $("adminReportList").innerHTML=list.length?list.map(r=>{const b=bookings.find(x=>x.id===r.bookingId),s=slotById(b?.slotId);if(!b)return"";return `<div class="card"><div class="card-top"><div><h4>${esc(b.mentorName)} • ${esc(bookingStudentName(b))}</h4><div class="meta">${esc(b.mentorMatric||"-")} • ${esc(b.email)}<br>${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.subject)} • ${esc(s.group)}`:""}</div></div>${badge(r.status)}</div><div class="kv"><b>Apa diajar</b><span>${esc(r.taught)}</span><b>Progress</b><span>${esc(r.progress)}</span><b>Reaksi mentee</b><span>${esc(r.reaction)}</span><b>Perlu perhatian</b><span>${esc(r.attention)}</span><b>Cadangan</b><span>${esc(r.next||"-")}</span><b>Penilaian</b><span>${(r.ratings||[]).map((x,i)=>`${i+1}: ${x}/5`).join(" • ")}</span></div><div class="attachment-summary"><b>Lampiran (${(r.attachments||[]).length})</b>${reportAttachmentMarkup(r)}</div><div class="actions">${r.status!=="approved"?`<button class="primary" onclick="approveReport('${r.id}')">Luluskan</button>`:""}<button class="secondary" onclick="returnReport('${r.id}')">Pulangkan untuk Pembetulan</button><button class="danger" onclick="rejectReport('${r.id}')">Tidak Lulus</button><button class="ghost" onclick="adminEditReport('${r.id}')">Sunting Kandungan</button><button class="secondary" type="button" onclick="printMentorReport('${r.id}')">Cetak Laporan</button><button class="danger" onclick="deleteReportRecord('${r.id}')">Padam Laporan</button></div>${r.adminNote?`<div class="notice info"><b>Catatan Pentadbir:</b> ${esc(r.adminNote)}</div>`:""}</div>`}).join(""):'<div class="empty">Tiada laporan dalam kategori ini.</div>';hydrateStoredImages($("adminReportList"));updateStats()
+  $("adminReportList").innerHTML=list.length?list.map(r=>{const b=bookings.find(x=>x.id===r.bookingId),s=slotById(b?.slotId);if(!b)return"";return `<div class="card"><div class="card-top"><div><h4>${esc(b.mentorName)} • ${esc(bookingStudentName(b))}</h4><div class="meta">${esc(b.mentorMatric||"-")} • ${esc(b.email)}<br>${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.subject)} • ${esc(s.group)}`:""}</div></div>${badge(r.status)}</div><div class="kv"><b>Apa diajar</b><span>${esc(r.taught)}</span><b>Progress</b><span>${esc(r.progress)}</span><b>Reaksi mentee</b><span>${esc(r.reaction)}</span><b>Perlu perhatian</b><span>${esc(r.attention)}</span><b>Cadangan</b><span>${esc(r.next||"-")}</span><b>Penilaian</b><span>${(r.ratings||[]).map((x,i)=>`${i+1}: ${x}/5`).join(" • ")}</span></div><div class="attachment-summary"><b>Lampiran (${(r.attachments||[]).length})</b>${reportAttachmentMarkup(r)}</div>${mentorEvaluationMarkup(r.id)}<div class="actions">${r.status!=="approved"?`<button class="primary" onclick="approveReport('${r.id}')">Luluskan</button>`:""}<button class="secondary" type="button" onclick="openMentorEvaluation('${r.id}')">${mentorEvaluationForReport(r.id)?"Edit Penilaian Mentor":"Nilai Mentor"}</button><button class="secondary" onclick="returnReport('${r.id}')">Pulangkan untuk Pembetulan</button><button class="danger" onclick="rejectReport('${r.id}')">Tidak Lulus</button><button class="ghost" onclick="adminEditReport('${r.id}')">Sunting Kandungan</button><button class="secondary" type="button" onclick="printMentorReport('${r.id}')">Cetak Laporan</button><button class="danger" onclick="deleteReportRecord('${r.id}')">Padam Laporan</button></div>${r.adminNote?`<div class="notice info"><b>Catatan Pentadbir:</b> ${esc(r.adminNote)}</div>`:""}</div>`}).join(""):'<div class="empty">Tiada laporan dalam kategori ini.</div>';hydrateStoredImages($("adminReportList"));updateStats()
 }
 function approveReport(id){const r=reports.find(x=>x.id===id),b=bookings.find(x=>x.id===r?.bookingId);if(!r||!b)return;r.status="approved";r.adminNote="";r.updatedAt=new Date().toISOString();saveAll();notify(b.email,`Laporan bagi ${b.ticket} telah DILULUSKAN dan kini dipaparkan dalam Galeri Laporan Aktiviti.`,"success","report_approved");renderAll()}
 function returnReport(id){const r=reports.find(x=>x.id===id),b=bookings.find(x=>x.id===r?.bookingId),n=prompt("Nyatakan pembetulan yang diperlukan:","");if(!r||!b||!n)return;r.status="returned";r.adminNote=n;r.updatedAt=new Date().toISOString();saveAll();notify(b.email,`Laporan bagi ${b.ticket} dipulangkan untuk pembetulan. Catatan: ${n}`,"warn","report_returned");renderAll()}
@@ -1645,12 +1675,19 @@ function mapPublicBooking(r){
   const s=slotById(r.slot_id);
   return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:"no",mentorNote:"",adminNote:"",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at};
 }
+function mapMentorEvaluation(r){return {id:r.id,reportId:r.report_id,bookingId:r.booking_id||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",score:Number(r.score||0),comment:r.comment||"",evaluatedBy:r.evaluated_by||"",createdAt:r.created_at,updatedAt:r.updated_at}}
+function mentorEvaluationForReport(reportId){return mentorEvaluations.find(x=>x.reportId===reportId)||null}
+function mentorEvaluationMarkup(reportId){
+  const e=mentorEvaluationForReport(reportId);
+  if(!e)return "";
+  return `<div class="mentor-evaluation-private"><div class="eyebrow">Penilaian Sulit Pentadbir</div><div class="score">${e.score.toFixed(1)}/5.0 <span class="stars-inline">★</span></div><div class="comment">${esc(e.comment||"-")}</div><div class="privacy">Hanya Mentor berkenaan dan Pentadbir boleh melihat penilaian ini.</div></div>`;
+}
 function mapReport(r,atts){return {id:r.id,bookingId:r.booking_id,taught:r.taught||"",progress:r.progress||"",reaction:r.reaction||"",attention:r.attention||"",next:r.next_session||"",ratings:[r.rating_focus||0,r.rating_understanding||0,r.rating_communication||0,r.rating_motivation||0,r.rating_rukaiyah||0],status:r.status,adminNote:r.admin_feedback||"",createdAt:r.submitted_at,updatedAt:r.updated_at,attachments:(atts||[]).filter(a=>a.report_id===r.id).map(a=>({id:a.id,key:sbFileKey("report-files",a.storage_path),name:a.file_name,type:a.mime_type||"application/octet-stream"}))}}
 
 async function loadSupabaseState(){
   if(!supabaseClient||supabaseLoading)return;supabaseLoading=true;
   try{
-    const [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh]=await Promise.all([
+    const [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh,mev]=await Promise.all([
       supabaseClient.from("profiles").select("*"),
       supabaseClient.from("mentees").select("*").eq("active",true),
       supabaseClient.from("schedule_slots").select("*").eq("active",true),
@@ -1662,15 +1699,17 @@ async function loadSupabaseState(){
       supabaseClient.from("notifications").select("*").order("created_at",{ascending:false}),
       supabaseClient.rpc("mentor_public_booking_snapshot"),
       supabaseClient.rpc("mentor_public_directory"),
-      supabaseClient.rpc("mentor_service_history")
+      supabaseClient.rpc("mentor_service_history"),
+      supabaseClient.from("mentor_evaluations").select("*").order("updated_at",{ascending:false})
     ]);
-    for(const x of [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh])if(x.error)console.warn("Supabase load:",x.error.message);
+    for(const x of [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh,mev])if(x.error)console.warn("Supabase load:",x.error.message);
     {
       const ownOrAdmin=(p.data||[]).map(mapProfile);
       const publicProfiles=adminMode?[]:(pd.data||[]).map(mapPublicMentorProfile);
       mentorProfiles=mergeMentorProfileRows([...ownOrAdmin,...publicProfiles]);
     }
     mentorServiceRecords=(msh.data||[]).map(mapMentorServiceRecord);
+    mentorEvaluations=(mev.data||[]).map(mapMentorEvaluation);
     if(m.data)students=m.data.map(mapMentee);
     if(s.data&&s.data.length){SCHEDULE=s.data.map(mapSlot).sort(scheduleSort);if(!SCHEDULE.some(x=>x.date===selectedDate))selectedDate=SCHEDULE[0]?.date||""}
     if(adminMode){
@@ -1897,11 +1936,57 @@ async function rejectReport(id){const n=prompt("Sebab laporan tidak diluluskan:"
 async function deleteReportRecord(id){if(!confirm("Padam laporan ini secara kekal?"))return;const r=reports.find(x=>x.id===id);for(const f of r?.attachments||[]){try{await deleteSbFile(f.key)}catch{}}const {error}=await supabaseClient.from("reports").delete().eq("id",id);if(error){alert(error.message);return}await loadSupabaseState()}
 async function adminEditReport(id){const r=reports.find(x=>x.id===id);if(!r)return;const taught=prompt("Apa yang diajar:",r.taught||"");if(taught===null)return;const progress=prompt("Progress / kemajuan:",r.progress||"");if(progress===null)return;const reaction=prompt("Reaksi mentee:",r.reaction||"");if(reaction===null)return;const attention=prompt("Perkara yang perlu perhatian:",r.attention||"");if(attention===null)return;const next=prompt("Cadangan sesi seterusnya:",r.next||"");if(next===null)return;const {error}=await supabaseClient.from("reports").update({taught,progress,reaction,attention,next_session:next}).eq("id",id);if(error){alert(error.message);return}await loadSupabaseState();alert("Kandungan laporan berjaya disunting.")}
 
+function openMentorEvaluation(reportId){
+  if(!adminMode){alert("Akses Pentadbir diperlukan.");return}
+  const r=reports.find(x=>x.id===reportId),b=bookings.find(x=>x.id===r?.bookingId),s=slotById(b?.slotId);
+  if(!r||!b)return;
+  const e=mentorEvaluationForReport(reportId);
+  $("mentorEvaluationReportId").value=reportId;
+  $("mentorEvaluationScore").value=e?e.score.toFixed(1):"";
+  $("mentorEvaluationComment").value=e?.comment||"";
+  $("mentorEvaluationSummary").innerHTML=`<b>${esc(b.mentorName)}</b> (${esc(b.mentorMatric||"-")})<br>${s?`${esc(s.subject)} • ${esc(s.group)} • ${s.day}, ${fmtDate(s.date)}`:""}<br>Mentee: <b>${esc(bookingStudentName(b))}</b>`;
+  $("deleteMentorEvaluationBtn").classList.toggle("hidden",!e);
+  $("mentorEvaluationModal").classList.add("open");
+}
+async function saveMentorEvaluation(){
+  if(!adminMode){alert("Akses Pentadbir diperlukan.");return}
+  const reportId=$("mentorEvaluationReportId").value;
+  const r=reports.find(x=>x.id===reportId),b=bookings.find(x=>x.id===r?.bookingId);
+  if(!r||!b){alert("Rekod laporan tidak ditemui.");return}
+  const raw=String($("mentorEvaluationScore").value||"").trim();
+  const score=Number(raw);
+  const comment=$("mentorEvaluationComment").value.trim();
+  if(raw===""||!Number.isFinite(score)||score<0||score>5){alert("Masukkan skor antara 0.0 hingga 5.0.");return}
+  if(!/^\d(?:\.\d)?$/.test(raw) && raw!=="5.0"){alert("Gunakan maksimum satu tempat perpuluhan. Contoh: 4.9 atau 5.0.");return}
+  if(!comment){alert("Sila masukkan komen Pentadbir.");return}
+  const rounded=Math.round(score*10)/10;
+  const existing=mentorEvaluationForReport(reportId);
+  const payload={report_id:reportId,booking_id:b.id,mentor_matric:b.mentorMatric||"",mentor_name:b.mentorName||"",score:rounded,comment,evaluated_by:currentUserId,updated_at:new Date().toISOString()};
+  let q=existing
+    ? supabaseClient.from("mentor_evaluations").update(payload).eq("id",existing.id)
+    : supabaseClient.from("mentor_evaluations").insert(payload);
+  const {error}=await q;
+  if(error){alert("Penilaian tidak dapat disimpan: "+error.message);return}
+  await pushNotification({userId:b.userId,message:`Pentadbir telah memberikan penilaian ${rounded.toFixed(1)}/5.0 untuk laporan ${b.ticket}.`,linkType:"report",linkId:reportId});
+  closeModal("mentorEvaluationModal");
+  await loadSupabaseState();
+  alert("Penilaian Mentor berjaya disimpan secara sulit.");
+}
+async function deleteMentorEvaluation(){
+  if(!adminMode)return;
+  const reportId=$("mentorEvaluationReportId").value;
+  const e=mentorEvaluationForReport(reportId);
+  if(!e||!confirm("Padam penilaian Mentor ini?"))return;
+  const {error}=await supabaseClient.from("mentor_evaluations").delete().eq("id",e.id);
+  if(error){alert(error.message);return}
+  closeModal("mentorEvaluationModal");
+  await loadSupabaseState();
+}
 async function markAllNotificationsRead(){const ids=currentNotifications().filter(n=>!n.read).map(n=>n.id);if(ids.length)await supabaseClient.from("notifications").update({is_read:true}).in("id",ids);await loadSupabaseState()}
 async function markAllAdminNotificationsRead(){const ids=notifications.filter(n=>n.target==="*admin*"&&!n.read).map(n=>n.id);if(ids.length)await supabaseClient.from("notifications").update({is_read:true}).in("id",ids);await loadSupabaseState()}
 async function openNotification(id){const n=notifications.find(x=>x.id===id);if(!n)return;await supabaseClient.from("notifications").update({is_read:true}).eq("id",id);n.read=true;renderNotifications();$("notificationPopover")?.classList.remove("open");const bookingId=notificationBookingId(n);if(bookingId){notificationFocusBookingId=bookingId;if(adminMode){activeReviewBookingId=bookingId;if($("statusFilter"))$("statusFilter").value="all";if($("adminSearch"))$("adminSearch").value="";switchTab("admin");switchAdminPane("bookings");renderAdminBookings();setTimeout(()=>document.getElementById(`admin-booking-${bookingId}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80)}else{setMentorBookingFilter("all");switchTab("mybooking");renderMyBookings()}return}if(n.event==="report"){if(adminMode){switchTab("admin");switchAdminPane("adminReports")}else switchTab("reports")}}
 
-function setupRealtime(){if(!supabaseClient||realtimeChannel)return;const refresh=()=>loadSupabaseState();realtimeChannel=supabaseClient.channel("helaa-rukaiyah-live").on("postgres_changes",{event:"*",schema:"public",table:"bookings"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"notifications"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"schedule_slots"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"materials"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"material_files"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentees"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"reports"},refresh).subscribe()}
+function setupRealtime(){if(!supabaseClient||realtimeChannel)return;const refresh=()=>loadSupabaseState();realtimeChannel=supabaseClient.channel("helaa-rukaiyah-live").on("postgres_changes",{event:"*",schema:"public",table:"bookings"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"notifications"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"schedule_slots"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"materials"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"material_files"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentees"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"reports"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentor_evaluations"},refresh).subscribe()}
 
 async function init(){
   try{
@@ -1972,7 +2057,7 @@ Object.assign(window,{
   saveMaterialSet,cancelMaterialEdit,editMaterial,deleteMaterial,removeMaterialFile,
   openMenteeCreate,openMenteeEdit,saveMenteeProfile,deleteMentee,
   approveBooking,openReassign,confirmReassign,rejectBooking,revertBooking,restorePending,withdrawBooking,adminWithdrawBooking,adminEditBooking,deleteBookingRecord,
-  approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport
+  approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation
 });
 
 // ---------- Initial setup ----------
