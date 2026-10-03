@@ -682,109 +682,53 @@ function renderApprovedReports(){
 }
 
 
+
+function printDraftMentorReport(){
+  const bookingId=$("reportBookingId").value;
+  const b=bookings.find(x=>x.id===bookingId);
+  if(!b){alert("Rekod tempahan tidak ditemui.");return}
+  const draft={
+    id:"draft",
+    bookingId,
+    taught:$("reportTaught").value.trim(),
+    progress:$("reportProgress").value.trim(),
+    reaction:$("reportReaction").value.trim(),
+    attention:$("reportAttention").value.trim(),
+    next:$("reportNext").value.trim(),
+    ratings:[...reportRatings],
+    status:"DRAF",
+    adminNote:"",
+    createdAt:new Date().toISOString(),
+    updatedAt:new Date().toISOString(),
+    attachments:[]
+  };
+  printMentorReportData(draft,b,true);
+}
+function printMentorReportData(r,b,isDraft=false){
+  const s=slotById(b?.slotId);
+  const ratings=(r.ratings||[]);
+  const ratingRows=RATING_LABELS.map((label,i)=>`<tr><td>${esc(label)}</td><td style="text-align:center;font-weight:700">${ratings[i]?esc(String(ratings[i]))+"/5":"Belum dinilai"}</td></tr>`).join("");
+  const html=`<!doctype html><html lang="ms"><head><meta charset="utf-8"><title>${isDraft?"Draf ":""}Laporan Mentor - ${esc(bookingStudentName(b))}</title><style>
+  *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#1f2d3d;margin:0}.page{max-width:820px;margin:auto;padding:34px}.head{border-bottom:3px solid #587590;padding-bottom:16px;margin-bottom:22px}.brand{font-size:12px;font-weight:700;letter-spacing:.08em;color:#587590;text-transform:uppercase}h1{font-size:25px;margin:5px 0}.sub{color:#667085;font-size:13px;line-height:1.5}.status{display:inline-block;margin-top:10px;padding:6px 10px;border-radius:999px;background:#edf2f6;color:#344d65;font-size:12px;font-weight:700}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}.box,.text{border:1px solid #d8e1e8;border-radius:10px;padding:12px}.label{font-size:11px;text-transform:uppercase;color:#667085;font-weight:700;margin-bottom:5px}.value{font-size:14px;font-weight:700}.section{margin-top:20px}.section h2{font-size:16px;color:#344d65}.text{white-space:pre-wrap;line-height:1.55;font-size:13px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d8e1e8;padding:9px;font-size:12px;text-align:left}th{background:#f4f7f9}.draft{background:#fff3cd;border:1px solid #efd37a;padding:10px;border-radius:8px;margin:12px 0;font-weight:700}.no-print{margin-bottom:18px}button{background:#587590;color:#fff;border:0;border-radius:8px;padding:10px 14px;font-weight:700}@media print{.no-print{display:none}.page{padding:0}@page{size:A4;margin:16mm}}</style></head><body><div class="page">
+  <div class="no-print"><button onclick="window.print()">Cetak / Simpan sebagai PDF</button></div>
+  <div class="head"><div class="brand">HELAA KRK • Projek Komuniti Rukaiyah</div><h1>${isDraft?"Draf ":""}Laporan Mentor kepada Mentee</h1><div class="sub">Sistem Mentor-Mentee Rukaiyah<br>Kolej Rahim Kajai, Universiti Kebangsaan Malaysia</div>${isDraft?'<div class="draft">DRAF BELUM DIHANTAR UNTUK SEMAKAN</div>':`<span class="status">${esc(statusLabel(r.status||"pending"))}</span>`}</div>
+  <div class="grid"><div class="box"><div class="label">Mentee</div><div class="value">${esc(bookingStudentName(b))}</div></div><div class="box"><div class="label">Mentor</div><div class="value">${esc(b.mentorName||"-")} (${esc(b.mentorMatric||"-")})</div></div><div class="box"><div class="label">Subjek</div><div class="value">${esc(s?.subject||"-")}</div></div><div class="box"><div class="label">Tahun / Tingkatan</div><div class="value">${esc(s?.group||"-")}</div></div><div class="box"><div class="label">Tarikh</div><div class="value">${s?esc(`${s.day}, ${fmtDate(s.date)}`):"-"}</div></div><div class="box"><div class="label">Masa</div><div class="value">${esc(s?.time||"-")}</div></div></div>
+  <div class="section"><h2>1. Apa yang diajar</h2><div class="text">${esc(r.taught||"Belum diisi")}</div></div>
+  <div class="section"><h2>2. Progress / kemajuan mentee</h2><div class="text">${esc(r.progress||"Belum diisi")}</div></div>
+  <div class="section"><h2>3. Reaksi, tingkah laku dan tahap kefahaman</h2><div class="text">${esc(r.reaction||"Belum diisi")}</div></div>
+  <div class="section"><h2>4. Perkara yang perlu diberi perhatian</h2><div class="text">${esc(r.attention||"Belum diisi")}</div></div>
+  <div class="section"><h2>5. Cadangan untuk sesi seterusnya</h2><div class="text">${esc(r.next||"Belum diisi")}</div></div>
+  <div class="section"><h2>Penilaian Sesi</h2><table><thead><tr><th>Aspek</th><th style="width:110px;text-align:center">Skor</th></tr></thead><tbody>${ratingRows}</tbody></table></div>
+  </div></body></html>`;
+  const w=window.open("","_blank","noopener,noreferrer");if(!w){alert("Popup disekat oleh browser. Benarkan popup untuk mencetak.");return}w.document.open();w.document.write(html);w.document.close();w.focus();
+}
+
 function printMentorReport(reportId){
   const r=reports.find(x=>x.id===reportId);
   if(!r){alert("Laporan tidak ditemui.");return}
   const b=bookings.find(x=>x.id===r.bookingId);
-  const s=slotById(b?.slotId);
   if(!b){alert("Rekod tempahan untuk laporan ini tidak ditemui.");return}
-
-  const statusText=statusLabel(r.status||"pending");
-  const ratings=(r.ratings||[]);
-  const ratingRows=RATING_LABELS.map((label,i)=>`
-    <tr>
-      <td>${esc(label)}</td>
-      <td style="text-align:center;font-weight:700">${esc(String(ratings[i]||"-"))}/5</td>
-    </tr>
-  `).join("");
-
-  const submitted=r.updatedAt||r.createdAt;
-  const submittedText=submitted?new Date(submitted).toLocaleString("ms-MY"):"-";
-
-  const html=`<!doctype html>
-  <html lang="ms">
-  <head>
-    <meta charset="utf-8">
-    <title>Laporan Mentor - ${esc(bookingStudentName(b))}</title>
-    <style>
-      *{box-sizing:border-box}
-      body{font-family:Arial,Helvetica,sans-serif;color:#1f2d3d;margin:0;background:#fff}
-      .page{max-width:820px;margin:0 auto;padding:34px}
-      .head{border-bottom:3px solid #587590;padding-bottom:16px;margin-bottom:22px}
-      .brand{font-size:12px;font-weight:700;letter-spacing:.08em;color:#587590;text-transform:uppercase}
-      h1{font-size:25px;margin:5px 0 6px}
-      .sub{color:#667085;font-size:13px;line-height:1.5}
-      .status{display:inline-block;margin-top:10px;padding:6px 10px;border-radius:999px;background:#edf2f6;color:#344d65;font-size:12px;font-weight:700}
-      .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}
-      .box{border:1px solid #d8e1e8;border-radius:10px;padding:12px}
-      .label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#667085;font-weight:700;margin-bottom:5px}
-      .value{font-size:14px;font-weight:700}
-      .section{margin-top:20px}
-      .section h2{font-size:16px;margin:0 0 8px;color:#344d65}
-      .text{border:1px solid #d8e1e8;border-radius:10px;padding:12px;white-space:pre-wrap;line-height:1.55;font-size:13px}
-      table{width:100%;border-collapse:collapse;margin-top:8px}
-      th,td{border:1px solid #d8e1e8;padding:9px;font-size:12px;text-align:left}
-      th{background:#f4f7f9}
-      .feedback{background:#fff8e8;border:1px solid #f0d9a2;border-radius:10px;padding:12px}
-      .footer{margin-top:28px;padding-top:12px;border-top:1px solid #d8e1e8;color:#667085;font-size:10px}
-      .no-print{margin-bottom:18px}
-      button{background:#587590;color:#fff;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}
-      @media print{
-        .no-print{display:none}
-        .page{padding:0}
-        @page{size:A4;margin:16mm}
-      }
-    </style>
-  </head>
-  <body>
-    <div class="page">
-      <div class="no-print"><button onclick="window.print()">Cetak / Simpan sebagai PDF</button></div>
-      <div class="head">
-        <div class="brand">HELAA KRK • Projek Komuniti Rukaiyah</div>
-        <h1>Laporan Mentor kepada Mentee</h1>
-        <div class="sub">Sistem Mentor-Mentee Rukaiyah<br>Kolej Rahim Kajai, Universiti Kebangsaan Malaysia</div>
-        <span class="status">${esc(statusText)}</span>
-      </div>
-
-      <div class="grid">
-        <div class="box"><div class="label">Mentee</div><div class="value">${esc(bookingStudentName(b))}</div></div>
-        <div class="box"><div class="label">Mentor</div><div class="value">${esc(b.mentorName||"-")} (${esc(b.mentorMatric||"-")})</div></div>
-        <div class="box"><div class="label">Subjek</div><div class="value">${esc(s?.subject||"-")}</div></div>
-        <div class="box"><div class="label">Tahun / Tingkatan</div><div class="value">${esc(s?.group||"-")}</div></div>
-        <div class="box"><div class="label">Tarikh</div><div class="value">${s?esc(`${s.day}, ${fmtDate(s.date)}`):"-"}</div></div>
-        <div class="box"><div class="label">Masa</div><div class="value">${esc(s?.time||"-")}</div></div>
-      </div>
-
-      <div class="section"><h2>1. Apa yang diajar</h2><div class="text">${esc(r.taught||"-")}</div></div>
-      <div class="section"><h2>2. Progress / kemajuan mentee</h2><div class="text">${esc(r.progress||"-")}</div></div>
-      <div class="section"><h2>3. Reaksi, tingkah laku dan tahap kefahaman</h2><div class="text">${esc(r.reaction||"-")}</div></div>
-      <div class="section"><h2>4. Perkara yang perlu diberi perhatian</h2><div class="text">${esc(r.attention||"-")}</div></div>
-      <div class="section"><h2>5. Cadangan untuk sesi seterusnya</h2><div class="text">${esc(r.next||"-")}</div></div>
-
-      <div class="section">
-        <h2>Penilaian Sesi</h2>
-        <table>
-          <thead><tr><th>Aspek</th><th style="width:90px;text-align:center">Skor</th></tr></thead>
-          <tbody>${ratingRows}</tbody>
-        </table>
-      </div>
-
-      ${r.adminNote?`<div class="section"><h2>Catatan Pentadbir</h2><div class="feedback">${esc(r.adminNote)}</div></div>`:""}
-
-      <div class="footer">
-        Tarikh rekod dikemas kini: ${esc(submittedText)}<br>
-        Dokumen ini dijana daripada Sistem Mentor-Mentee Rukaiyah.
-      </div>
-    </div>
-  </body>
-  </html>`;
-
-  const w=window.open("","_blank","noopener,noreferrer");
-  if(!w){alert("Popup disekat oleh browser. Benarkan popup untuk menggunakan fungsi Cetak Laporan.");return}
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  w.focus();
+  printMentorReportData(r,b,false);
 }
 
 // ---------- Teaching materials ----------
@@ -877,6 +821,34 @@ async function deleteSbFile(key){const p=parseSbFileKey(key);if(!p)return;const 
 async function idbGet(key){const p=parseSbFileKey(key);if(p&&supabaseClient){const {data,error}=await supabaseClient.storage.from(p.bucket).download(p.path);if(error)throw error;return data}try{const db=await openDB();const got=await new Promise((res,rej)=>{const r=db.transaction(STORE,"readonly").objectStore(STORE).get(key);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});if(got)return got}catch{}const fallback=storageGet(`helaa_file_${key}`);return fallback?dataUrlToBlob(fallback):null}
 
 function mapProfile(r){return {id:r.id,email:r.email||"",fullName:r.full_name||"",matric:r.matric_no||"",faculty:r.faculty||"",course:r.course||"",phone:r.phone||"",strength:r.teaching_strength||"",about:r.about||"",photoKey:r.photo_path?sbFileKey("mentor-photos",r.photo_path):"",subjects:r.subjects||[],levels:r.levels||[],otherSubject:"",publicConsent:!!r.public_display_consent,updatedAt:r.updated_at||""}}
+
+function mentorProfileRichness(p){
+  return [p.fullName,p.faculty,p.course,p.phone,p.strength,p.about,p.photoKey].filter(x=>String(x||"").trim()).length
+    +(p.subjects||[]).length+(p.levels||[]).length+(p.publicConsent?3:0);
+}
+function mergeMentorProfileRows(rows){
+  const groups=new Map();
+  for(const p of rows||[]){
+    const key=String(p.matric||p.email||p.id||"").trim().toUpperCase();
+    if(!key)continue;
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(p);
+  }
+  return [...groups.values()].map(list=>{
+    list.sort((a,b)=>mentorProfileRichness(b)-mentorProfileRichness(a)||String(b.updatedAt||"").localeCompare(String(a.updatedAt||"")));
+    const best={...list[0]};
+    const first=(field)=>list.find(x=>String(x?.[field]||"").trim())?.[field]||best[field]||"";
+    best.fullName=first("fullName");best.email=first("email");best.matric=first("matric");
+    best.faculty=first("faculty");best.course=first("course");best.phone=first("phone");
+    best.strength=first("strength");best.about=first("about");best.photoKey=first("photoKey");
+    best.subjects=[...new Set(list.flatMap(x=>x.subjects||[]))];
+    best.levels=[...new Set(list.flatMap(x=>x.levels||[]))];
+    best.publicConsent=list.some(x=>x.publicConsent===true);
+    best.updatedAt=list.map(x=>x.updatedAt||"").sort().at(-1)||"";
+    return best;
+  });
+}
+
 function mapPublicMentorProfile(r){return {id:r.id,email:"",fullName:r.full_name||"",matric:r.matric_no||"",faculty:r.faculty||"",course:r.course||"",phone:"",strength:r.teaching_strength||"",about:r.about||"",photoKey:r.photo_path?sbFileKey("mentor-photos",r.photo_path):"",subjects:r.subjects||[],levels:r.levels||[],otherSubject:"",publicConsent:true,updatedAt:r.updated_at||""}}
 function mapMentee(r){return {id:r.id,name:r.full_name||r.short_name||"",shortName:r.short_name||"",group:r.group_name,summary:r.description||"",photoKey:r.photo_path?sbFileKey("mentee-photos",r.photo_path):""}}
 function mapSlot(r){return {id:r.id,date:r.class_date,day:scheduleDayName(r.class_date),time:r.time_label,subject:r.subject,group:r.group_name,mode:r.mode||"individual",topic:r.topic||""}}
@@ -907,9 +879,7 @@ async function loadSupabaseState(){
     {
       const ownOrAdmin=(p.data||[]).map(mapProfile);
       const publicProfiles=adminMode?[]:(pd.data||[]).map(mapPublicMentorProfile);
-      const mapped=[...ownOrAdmin,...publicProfiles].sort((a,b)=>String(b.updatedAt||"").localeCompare(String(a.updatedAt||"")));
-      const seen=new Set();
-      mentorProfiles=mapped.filter(x=>{const k=String(x.matric||x.id||"").toUpperCase();if(!k)return false;if(seen.has(k))return false;seen.add(k);return true});
+      mentorProfiles=mergeMentorProfileRows([...ownOrAdmin,...publicProfiles]);
     }
     if(m.data)students=m.data.map(mapMentee);
     if(s.data&&s.data.length){SCHEDULE=s.data.map(mapSlot).sort(scheduleSort);if(!SCHEDULE.some(x=>x.date===selectedDate))selectedDate=SCHEDULE[0]?.date||""}
@@ -1008,7 +978,10 @@ async function adminEditBooking(id){const b=bookings.find(x=>x.id===id);if(!b)re
 async function saveMenteeProfile(){if(!adminMode)return;let id=$("menteeEditId").value.trim(),name=$("menteeEditName").value.trim(),group=$("menteeEditGroup").value,summary=$("menteeEditSummary").value.trim();if(!name||!group){alert("Nama dan Tahun/Tingkatan diperlukan.");return}let rec;if(id){const u=await supabaseClient.from("mentees").update({full_name:name,group_name:group,description:summary}).eq("id",id).select().single();if(u.error){alert(u.error.message);return}rec=u.data}else{const i=await supabaseClient.from("mentees").insert({short_name:name,full_name:name,group_name:group,description:summary,created_by:currentUserId}).select().single();if(i.error){alert(i.error.message);return}rec=i.data;id=rec.id}const f=$("menteeEditPhoto").files?.[0];if(f){const path=`mentees/${id}/${Date.now()}-${cleanFileName(f.name)}`;try{await uploadSb("mentee-photos",path,f);const u=await supabaseClient.from("mentees").update({photo_path:path}).eq("id",id);if(u.error)throw u.error}catch(e){alert("Maklumat disimpan tetapi gambar gagal dimuat naik: "+e.message)}}closeModal("menteeEditModal");await loadSupabaseState();alert("Maklumat mentee berjaya disimpan.")}
 async function deleteMentee(id){const s=studentById(id);if(!adminMode||!s||!confirm(`Padam mentee ${s.name}?`))return;const {error}=await supabaseClient.from("mentees").delete().eq("id",id);if(error){alert("Tidak dapat dipadam. Mungkin mentee masih mempunyai rekod tempahan. "+error.message);return}await loadSupabaseState()}
 
-async function saveMentorProfile(){const fullName=$("mentorProfileName").value.trim(),matric=$("mentorProfileMatric").value.trim().toUpperCase(),faculty=$("mentorProfileFaculty").value.trim(),course=$("mentorProfileCourse").value.trim(),about=$("mentorProfileAbout").value.trim(),subjects=[...document.querySelectorAll('input[name="mentorSubject"]:checked')].map(x=>x.value),levels=[...document.querySelectorAll('input[name="mentorLevel"]:checked')].map(x=>x.value);if(!fullName||!matric||!faculty||!course||!about||!subjects.length||!levels.length){alert("Lengkapkan semua ruangan wajib.");return}if(wordCount(about)>50){alert("Penerangan diri maksimum 50 patah perkataan.");return}let photoPath=null;const f=$("mentorProfilePhoto").files?.[0];if(f){photoPath=`${currentUserId}/profile/${Date.now()}-${cleanFileName(f.name)}`;try{await uploadSb("mentor-photos",photoPath,f)}catch(e){alert("Gambar gagal dimuat naik: "+e.message);return}}const publicConsent=!!$("mentorProfilePublicConsent")?.checked;const payload={email:currentEmail,matric_no:matric,full_name:fullName,faculty,course,phone:$("mentorProfilePhone").value.trim(),teaching_strength:$("mentorProfileStrength").value.trim(),about,subjects,levels,public_display_consent:publicConsent};if(photoPath)payload.photo_path=photoPath;const {error}=await supabaseClient.from("profiles").update(payload).eq("id",currentUserId);if(error){alert(error.message);return}currentMatric=matric;storageSet(KEYS.sessionMatric,matric);await loadSupabaseState();speakThanks();alert("Profil Mentor berjaya disimpan.")}
+async function saveMentorProfile(){const fullName=$("mentorProfileName").value.trim(),matric=$("mentorProfileMatric").value.trim().toUpperCase(),faculty=$("mentorProfileFaculty").value.trim(),course=$("mentorProfileCourse").value.trim(),about=$("mentorProfileAbout").value.trim(),subjects=[...document.querySelectorAll('input[name="mentorSubject"]:checked')].map(x=>x.value),levels=[...document.querySelectorAll('input[name="mentorLevel"]:checked')].map(x=>x.value);if(!fullName||!matric||!faculty||!course||!about||!subjects.length||!levels.length){alert("Lengkapkan semua ruangan wajib.");return}if(wordCount(about)>50){alert("Penerangan diri maksimum 50 patah perkataan.");return}let photoPath=null;const f=$("mentorProfilePhoto").files?.[0];if(f){photoPath=`${currentUserId}/profile/${Date.now()}-${cleanFileName(f.name)}`;try{await uploadSb("mentor-photos",photoPath,f)}catch(e){alert("Gambar gagal dimuat naik: "+e.message);return}}const publicConsent=!!$("mentorProfilePublicConsent")?.checked;const payload={email:currentEmail,matric_no:matric,full_name:fullName,faculty,course,phone:$("mentorProfilePhone").value.trim(),teaching_strength:$("mentorProfileStrength").value.trim(),about,subjects,levels,public_display_consent:publicConsent};if(photoPath)payload.photo_path=photoPath;const {error}=await supabaseClient.from("profiles").update(payload).eq("id",currentUserId);if(error){alert(error.message);return}
+const {error:syncError}=await supabaseClient.rpc("sync_my_mentor_profile",{p_full_name:fullName,p_matric:matric,p_faculty:faculty,p_course:course,p_phone:payload.phone,p_teaching_strength:payload.teaching_strength,p_about:about,p_subjects:subjects,p_levels:levels,p_public_display_consent:publicConsent,p_photo_path:photoPath});
+if(syncError){console.warn("Profile sync:",syncError.message)}
+currentMatric=matric;storageSet(KEYS.sessionMatric,matric);await loadSupabaseState();speakThanks();alert("Profil Mentor berjaya disimpan.")}
 
 async function saveScheduleItem(){if(!adminMode)return;const date=$("scheduleDate").value,time=$("scheduleTime").value.trim(),subject=$("scheduleSubject").value.trim(),group=$("scheduleGroup").value,mode=$("scheduleMode").value,topic=$("scheduleTopic").value.trim();if(!date||!time||!subject||!group){alert("Lengkapkan semua ruangan wajib jadual.");return}const payload={class_date:date,time_label:time,subject,group_name:group,mode:mode==="pksk"?"pksk":"individual",topic:topic||null,active:true,created_by:currentUserId};let q=scheduleEditId?supabaseClient.from("schedule_slots").update(payload).eq("id",scheduleEditId):supabaseClient.from("schedule_slots").insert(payload);const {error}=await q;if(error){alert(error.message);return}selectedDate=date;cancelScheduleEdit();await loadSupabaseState();alert("Jadual berjaya disimpan.")}
 async function deleteScheduleItem(id){const s=slotById(id);if(!adminMode||!s||!confirm(`Padam slot ${s.subject} • ${s.group}?`))return;const {error}=await supabaseClient.from("schedule_slots").delete().eq("id",id);if(error){alert("Slot tidak dapat dipadam jika mempunyai rekod berkaitan. "+error.message);return}await loadSupabaseState()}
@@ -1209,7 +1182,7 @@ Object.assign(window,{
   saveMaterialSet,cancelMaterialEdit,editMaterial,deleteMaterial,removeMaterialFile,
   openMenteeCreate,openMenteeEdit,saveMenteeProfile,deleteMentee,
   approveBooking,openReassign,confirmReassign,rejectBooking,revertBooking,restorePending,withdrawBooking,adminWithdrawBooking,adminEditBooking,deleteBookingRecord,
-  approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport
+  approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport
 });
 
 // ---------- Initial setup ----------
