@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#315B7D" />
+  <title>HELAA KRK | Sistem Mentor-Mentee Rukaiyah</title>
+  <link rel="stylesheet" href="style.css?v=7.0.0" />
+</head>
+<body>
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-card">
+      <div class="login-brand-row">
+        <div class="login-logo">HELAA</div>
+        <div>
+          <div class="eyebrow">HELAA KRK</div>
+          <h1>Sistem Mentor-Mentee Rukaiyah</h1>
+        </div>
+      </div>
+      <p class="login-project">Projek Komuniti Biro Hal Ehwal Luar, Alumni dan Antarabangsa Kolej Rahim Kajai UKM.</p>
+
+      <div class="login-tabs">
+        <button id="mentorLoginTab" class="active" type="button" onclick="setLoginMode('mentor')">Mentor</button>
+        <button id="adminLoginTab" type="button" onclick="setLoginMode('admin')">Pentadbir</button>
+      </div>
+
+      <form id="mentorLoginPane" class="login-pane active" onsubmit="event.preventDefault(); mentorLogin();">
+        <label>Alamat e-mel *</label>
+        <input id="loginEmail" type="email" placeholder="nama@email.com" autocomplete="email" required />
+        <label>Nombor Matrik Pelajar *</label>
+        <input id="loginMatric" type="text" placeholder="Contoh: A123456" autocomplete="off" required />
+        <button id="mentorLoginButton" class="primary wide" type="submit">Masuk sebagai Mentor</button>
+      </form>
+
+      <form id="adminLoginPane" class="login-pane" onsubmit="event.preventDefault(); adminLogin();">
+        <label>E-mel Pentadbir *</label>
+        <input id="adminEmail" type="email" placeholder="pentadbir@email.com" autocomplete="email" required />
+        <label>Nombor Matrik Pelajar *</label>
+        <input id="adminMatric" type="text" placeholder="Contoh: A123456" autocomplete="off" required />
+        <label>Passcode Pentadbir *</label>
+        <input id="adminPasscode" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Masukkan passcode" required />
+        <button id="adminLoginButton" class="primary wide" type="submit">Masuk sebagai Pentadbir</button>
+      </form>
+
+      <div class="login-hint">E-mel dan nombor matrik digunakan sebagai pengenalan pengguna. Untuk penggunaan sebenar merentas peranti, data dan fail perlu disambungkan kepada Supabase.</div>
+    </div>
+  </div>
+
+  <header class="hero">
+    <div class="wrap hero-inner">
+      <button class="hamburger" aria-label="Buka menu" onclick="toggleSidebar(true)">☰</button>
+      <div class="brand-row">
+        <div class="brand">
+          <div class="logo">HELAA</div>
+          <div>
+            <div class="eyebrow light">HELAA KRK</div>
+            <h1>Sistem Mentor-Mentee Rukaiyah</h1>
+            <p>Projek Komuniti Biro Hal Ehwal Luar, Alumni dan Antarabangsa Kolej Rahim Kajai UKM.</p>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <div class="notification-shell">
+            <button id="notificationBell" class="bell-btn" type="button" aria-label="Notifikasi" onclick="toggleNotificationPopover(event)">🔔<span id="bellNotifCount" class="bell-count hidden">0</span></button>
+            <div id="notificationPopover" class="notification-popover">
+              <div class="popover-head"><b>Notifikasi</b><button class="link-btn" onclick="markAllNotificationsRead()">Tanda dibaca</button></div>
+              <div id="notificationPopoverList" class="popover-list"></div>
+              <button class="popover-footer" onclick="switchTab('notifications')">Lihat semua notifikasi</button>
+            </div>
+          </div>
+          <div id="heroUserPill" class="user-pill">Belum log masuk</div>
+        </div>
+      </div>
+      <div class="hero-note"><b>Tempahan:</b> siapa cepat dia dapat. Pilihan mentee hanya muktamad selepas diluluskan Pentadbir. Slot yang telah diluluskan tidak lagi boleh ditempah oleh mentor lain.</div>
+    </div>
+  </header>
+
+  <div id="sidebarBackdrop" class="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
+  <aside id="sidebar" class="sidebar" aria-label="Menu utama">
+    <div class="sidebar-head">
+      <div><h3>HELAA KRK</h3><p>Mentor-Mentee Rukaiyah</p></div>
+      <button class="sidebar-close" onclick="toggleSidebar(false)">×</button>
+    </div>
+    <div class="sidebar-user">Log masuk sebagai<br><b id="sidebarUserLabel">-</b></div>
+    <nav class="sidebar-nav" id="mainNav">
+      <div class="nav-label">Program</div>
+      <button class="active" data-tab="booking"><span>Tempahan Kelas</span></button>
+      <button data-tab="mybooking"><span>Tempahan Saya</span></button>
+      <button data-tab="reports"><span>Laporan Saya</span></button>
+      <button data-tab="approvedReports"><span>Laporan Aktiviti</span></button>
+      <button data-tab="materials"><span>Bahan Mengajar</span></button>
+
+      <div class="nav-label">Komuniti</div>
+      <button data-tab="mentees"><span>Kenali Mentee</span></button>
+      <button data-tab="mentorProfile"><span>Profil Mentor</span></button>
+      <button data-tab="mentorDirectory"><span>Mentor Pernah Berkhidmat</span></button>
+      <button data-tab="faq"><span>FAQ & Peraturan</span></button>
+      <button data-tab="notifications"><span>Notifikasi</span><span id="navNotifCount"></span></button>
+
+      <div class="nav-label admin-only hidden">Pentadbiran</div>
+      <button data-tab="admin" id="adminNavBtn" class="hidden"><span>Dashboard Pentadbir</span></button>
+    </nav>
+    <div class="sidebar-sdg-static" aria-label="SDG berkaitan program">
+      <div class="nav-label">SDG Berkaitan Program</div>
+      <div class="sdg-mini-row">
+        <div class="sdg-mini sdg3-mini"><b>SDG 3</b><span>Kesihatan Baik & Kesejahteraan</span></div>
+        <div class="sdg-mini sdg1-mini"><b>SDG 1</b><span>Tiada Kemiskinan</span></div>
+        <div class="sdg-mini sdg4-mini"><b>SDG 4</b><span>Pendidikan Berkualiti</span></div>
+      </div>
+    </div>
+    <div class="sidebar-footer"><button class="ghost wide" type="button" onclick="logout()">Log Keluar / Tukar Akaun</button></div>
+  </aside>
+
+  <main class="wrap app-main">
+    <div class="user-strip">
+      <span>Log masuk sebagai <b id="currentUserLabel">-</b></span>
+      <div class="strip-actions"><span id="backendStatus" class="mini-status">Mod tempatan</span><button class="ghost" onclick="logout()">Log Keluar</button></div>
+    </div>
+
+    <section id="booking" class="section active">
+      <div class="panel">
+        <div class="eyebrow">Langkah 1</div>
+        <h2>Pilih hari kelas</h2>
+        <p class="lead">Pilih tarikh untuk melihat kelas yang tersedia. Mentee yang telah mempunyai mentor diluluskan tidak lagi dipaparkan.</p>
+        <div id="dayButtons" class="day-scroll"></div>
+        <div class="schedule-title">
+          <div><div class="eyebrow">Langkah 2</div><h3 id="selectedDayTitle">Jadual</h3></div>
+          <small id="selectedDayHint"></small>
+        </div>
+        <div id="slotGrid" class="slot-grid"></div>
+      </div>
+    </section>
+
+    <section id="mybooking" class="section">
+      <div class="panel">
+        <div class="eyebrow">Mentor</div>
+        <h2>Tempahan Saya</h2>
+        <p class="lead">Semua permohonan tempahan yang dihantar menggunakan e-mel dan nombor matrik anda dipaparkan di sini.</p>
+        <div id="myBookingList" class="cards"></div>
+      </div>
+    </section>
+
+    <section id="reports" class="section">
+      <div class="panel">
+        <div class="eyebrow">Selepas Sesi</div>
+        <h2>Laporan Mentor</h2>
+        <p class="lead">Laporan boleh diedit pada bila-bila masa. Jika laporan yang telah diluluskan diedit, statusnya akan kembali kepada <b>Menunggu Semakan</b> dan Pentadbir perlu menyemaknya semula.</p>
+        <div id="mentorReportList" class="cards"></div>
+      </div>
+    </section>
+
+    <section id="approvedReports" class="section">
+      <div class="panel">
+        <div class="eyebrow">Galeri Program</div>
+        <h2>Laporan Aktiviti yang Diluluskan</h2>
+        <p class="lead">Laporan yang telah diluluskan dipaparkan dalam bentuk visual. Gambar aktiviti yang dimuat naik oleh mentor akan muncul di sini.</p>
+        <div id="approvedReportGallery" class="report-gallery"></div>
+      </div>
+    </section>
+
+    <section id="mentees" class="section">
+      <div class="panel">
+        <div class="eyebrow">Komuniti Rukaiyah</div>
+        <h2>Kenali Mentee</h2>
+        <p class="lead">Senarai nama ringkas anak-anak Rukaiyah disusun mengikut Tahun dan Tingkatan. Pentadbir boleh menambah gambar serta gambaran ringkas setiap mentee.</p>
+        <div id="menteeDirectory" class="directory-groups"></div>
+      </div>
+    </section>
+
+    <section id="mentorProfile" class="section">
+      <div class="panel">
+        <div class="eyebrow">Profil Peribadi</div>
+        <h2>Profil Mentor</h2>
+        <p class="lead">Lengkapkan profil supaya Pentadbir mengenali kekuatan anda dan boleh membuat padanan mentor-mentee dengan lebih sesuai.</p>
+
+        <div class="profile-layout">
+          <div class="profile-photo-box">
+            <img id="mentorProfilePhotoPreview" class="profile-photo large" alt="Gambar mentor" />
+            <label class="upload-btn">Muat Naik Gambar<input id="mentorProfilePhoto" type="file" accept="image/*" hidden /></label>
+            <small>JPG, PNG atau WebP.</small>
+          </div>
+          <div class="form-grid">
+            <div><label>Nama Penuh *</label><input id="mentorProfileName" type="text" /></div>
+            <div><label>Nombor Matrik *</label><input id="mentorProfileMatric" type="text" /></div>
+            <div><label>Fakulti *</label><input id="mentorProfileFaculty" type="text" placeholder="Contoh: Fakulti Sains dan Teknologi" /></div>
+            <div><label>Jurusan / Program *</label><input id="mentorProfileCourse" type="text" placeholder="Contoh: Sains Sekitaran" /></div>
+            <div><label>No. Telefon <span class="muted">(pilihan)</span></label><input id="mentorProfilePhone" type="tel" placeholder="01X-XXXXXXX" /></div>
+            <div><label>Kaedah / kekuatan mengajar <span class="muted">(pilihan)</span></label><input id="mentorProfileStrength" type="text" placeholder="Contoh: penerangan visual, latih tubi, kuiz" /></div>
+            <div class="full-row">
+              <label>Ceritakan tentang diri anda dalam maksimum 50 patah perkataan *</label>
+              <textarea id="mentorProfileAbout" maxlength="500" oninput="updateAboutWordCount()" placeholder="Ceritakan sedikit latar belakang, minat, pengalaman atau pendekatan anda sebagai mentor."></textarea>
+              <div class="word-counter"><span id="aboutWordCount">0</span>/50 patah perkataan</div>
+            </div>
+            <div class="full-row"><label>Subjek yang boleh diajar *</label><div id="subjectCheckboxes" class="check-grid"></div></div>
+            <div id="otherSubjectWrap" class="full-row hidden"><label>Lain-lain, nyatakan</label><input id="otherSubjectText" type="text" /></div>
+            <div class="full-row"><label>Tahun / Tingkatan yang yakin untuk diajar *</label><div id="levelCheckboxes" class="check-grid levels"></div></div>
+            <div class="full-row"><button class="primary" onclick="saveMentorProfile()">Simpan Profil Mentor</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="mentorDirectory" class="section">
+      <div class="panel">
+        <div class="eyebrow">Rekod Khidmat</div>
+        <h2>Senarai Mentor Pernah Berkhidmat</h2>
+        <p class="lead">Mentor akan tersenarai selepas mempunyai sekurang-kurangnya satu tempahan yang telah diluluskan atau diatur semula oleh Pentadbir.</p>
+        <div id="mentorDirectoryList" class="mentor-directory"></div>
+      </div>
+    </section>
+
+    <section id="materials" class="section">
+      <div class="panel">
+        <div class="eyebrow">Rujukan Mentor</div>
+        <h2>Bahan Mengajar, Nota & Skema Jawapan</h2>
+        <p class="lead">Bahan disusun mengikut tarikh dan slot. Pentadbir boleh mengemas kini rekod yang telah dimuat naik pada bila-bila masa.</p>
+        <div id="materialsList" class="cards"></div>
+      </div>
+    </section>
+
+    <section id="faq" class="section">
+      <div class="panel faq">
+        <div class="eyebrow">Maklumat Program</div>
+        <h2>FAQ & Peraturan</h2>
+        <details open><summary>Di manakah kelas dijalankan?</summary><p>Pusat Jagaan Kanak-Kanak Yatim/Miskin Rukaiyah, Sungai Merab.</p></details>
+        <details><summary>Bagaimana dengan pengangkutan?</summary><p>Pengangkutan akan disediakan. Maklumat pergerakan akan dimaklumkan oleh HELAA.</p></details>
+        <details><summary>Apakah etika pakaian mentor?</summary><p>Mentor mestilah berpakaian sopan dan sesuai untuk sesi bersama kanak-kanak serta remaja.</p></details>
+        <details><summary>Adakah bahan mengajar disediakan?</summary><p>Ya. Bahan mengajar akan disediakan oleh pasukan HELAA. Bahan tambahan daripada mentor juga amat digalakkan.</p></details>
+        <details><summary>Bagaimana dengan Solat Isyak dan bacaan Al-Mulk?</summary><p>Bagi slot malam, beri laluan pada <b>8:50 PM hingga 9:10 PM</b> untuk Solat Isyak dan bacaan Al-Mulk. Aktiviti pengajaran perlu dihentikan sementara dalam tempoh tersebut.</p></details>
+        <details><summary>Bagaimana tempahan mentee ditentukan?</summary><p>Tempahan menggunakan konsep siapa cepat dia dapat. Tempahan hanya muktamad selepas kelulusan Pentadbir.</p></details>
+        <details><summary>Bagaimana kelas Persediaan PKSK dikendalikan?</summary><p>Kelas Persediaan Pentaksiran Kemasukan ke Sekolah Khusus (PKSK) akan dikendalikan oleh <b>Felo Yamin</b>. Seorang mentor tambahan adalah digalakkan. Sistem hanya memperuntukkan satu slot mentor tambahan bagi dua orang mentee PKSK.</p></details>
+        <details><summary>Adakah laporan selepas kelas wajib?</summary><p>Ya. Mentor perlu menghantar laporan ringkas, penilaian sesi dan sekurang-kurangnya satu gambar selepas sesi.</p></details>
+      </div>
+    </section>
+
+    <section id="notifications" class="section">
+      <div class="panel">
+        <div class="section-head-row"><div><div class="eyebrow">Pusat Notifikasi</div><h2>Notifikasi</h2></div><button class="ghost" onclick="markAllNotificationsRead()">Tanda Semua Telah Dibaca</button></div>
+        <div id="notificationList"></div>
+      </div>
+    </section>
+
+    <section id="admin" class="section">
+      <div class="admin-banner">
+        <div><div class="eyebrow light">Pentadbir HELAA</div><h2>Dashboard Pentadbir</h2><p id="adminIdentity">-</p></div>
+        <span id="adminBackendBadge" class="backend-badge">Backend tempatan</span>
+      </div>
+
+      <div id="adminStats" class="stats stats-6">
+        <div class="stat"><b id="statPending">0</b><span>TEMPAHAN MENUNGGU</span></div>
+        <div class="stat"><b id="statApproved">0</b><span>TEMPAHAN DILULUSKAN</span></div>
+        <div class="stat"><b id="statReports">0</b><span>LAPORAN MENUNGGU</span></div>
+        <div class="stat"><b id="statApprovedReports">0</b><span>LAPORAN DILULUSKAN</span></div>
+        <div class="stat"><b id="statMentors">0</b><span>MENTOR PERNAH BERKHIDMAT</span></div>
+        <div class="stat"><b id="statMaterials">0</b><span>SET BAHAN</span></div>
+      </div>
+
+      <div class="panel">
+        <div class="admin-tabs">
+          <button class="active" data-admin="adminDashboard">Ringkasan</button>
+          <button data-admin="bookings">Tempahan</button>
+          <button data-admin="adminReports">Laporan</button>
+          <button data-admin="adminMaterials">Bahan Mengajar</button>
+          <button data-admin="adminSchedule">Pengurusan Jadual</button>
+          <button data-admin="adminMentees">Kenali Mentee</button>
+          <button data-admin="adminNotifications">Notifikasi</button>
+          <button data-admin="adminEmailSettings">Tetapan E-mel</button>
+        </div>
+
+        <div id="adminDashboard" class="admin-pane active">
+          <div class="dashboard-grid">
+            <div class="dashboard-card"><h3>Kadar Pengisian Slot</h3><div id="occupancyOverview"></div></div>
+            <div class="dashboard-card"><h3>Tindakan Terkini</h3><div id="adminRecentActivity"></div></div>
+          </div>
+          <div class="dashboard-card backend-info">
+            <h3>Status Sistem</h3>
+            <p id="backendDescription"></p>
+          </div>
+        </div>
+
+        <div id="bookings" class="admin-pane">
+          <div class="admin-toolbar">
+            <div class="filters"><select id="statusFilter" onchange="renderAdminBookings()"><option value="all">Semua status</option><option value="pending">Menunggu</option><option value="approved">Diluluskan</option><option value="reassigned">Diatur semula</option><option value="rejected">Ditolak</option><option value="reverted">Dibuka semula</option></select><input id="adminSearch" placeholder="Cari mentor / mentee / matrik" oninput="renderAdminBookings()" /></div>
+            <button class="ghost" onclick="copyWhatsAppSummary()">Salin Ringkasan WhatsApp</button>
+          </div>
+          <div id="adminBookingList" class="cards"></div>
+        </div>
+
+        <div id="adminReports" class="admin-pane">
+          <div class="admin-toolbar"><div class="filters"><select id="reportStatusFilter" onchange="renderAdminReports()"><option value="all">Semua laporan</option><option value="pending">Menunggu Semakan</option><option value="approved">Diluluskan</option><option value="returned">Dipulangkan</option><option value="rejected">Tidak Diluluskan</option></select></div></div>
+          <div id="adminReportList" class="cards"></div>
+        </div>
+
+        <div id="adminMaterials" class="admin-pane">
+          <div id="materialEditBanner" class="notice info hidden"></div>
+          <div class="form-grid material-admin-form">
+            <div class="full-row"><label>Pilih Slot *</label><select id="materialSlot"></select></div>
+            <div class="full-row"><label>Tajuk bahan / set latihan</label><input id="materialTitle" type="text" placeholder="Contoh: Modul Latih Tubi Matematik" /></div>
+            <div class="upload-zone"><label>Bahan Mengajar (boleh pilih banyak fail)</label><input id="materialFiles" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.webp" /></div>
+            <div class="upload-zone"><label>Skema Jawapan (boleh pilih banyak fail)</label><input id="schemeFiles" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.webp" /></div>
+            <div class="upload-zone full-row"><label>Fail Nota / Arahan Tambahan</label><input id="noteFiles" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.webp" /></div>
+            <div class="full-row"><label>Nota / arahan kepada mentor</label><textarea id="materialNote" placeholder="Contoh: Fokus latihan muka surat 3 hingga 7."></textarea></div>
+            <div class="full-row actions"><button class="primary" onclick="saveMaterialSet()">Simpan / Kemas Kini</button><button id="cancelMaterialEditBtn" class="ghost hidden" onclick="cancelMaterialEdit()">Batal Edit</button></div>
+          </div>
+          <div class="section-divider"></div>
+          <div id="adminMaterialList" class="cards"></div>
+        </div>
+
+        <div id="adminSchedule" class="admin-pane">
+          <div class="notice info"><b>Pengurusan Jadual:</b> Pentadbir boleh menambah, menyunting dan memadam slot kelas. Jadual baharu akan terus muncul pada paparan tempahan mentor.</div>
+          <input id="scheduleEditId" type="hidden" />
+          <div id="scheduleEditBanner" class="notice warn hidden"></div>
+          <div class="form-grid schedule-admin-form">
+            <div><label>Tarikh *</label><input id="scheduleDate" type="date" /></div>
+            <div><label>Masa *</label><input id="scheduleTime" type="text" placeholder="Contoh: 8.00 PM - 10.15 PM*" /></div>
+            <div><label>Subjek / Aktiviti *</label><input id="scheduleSubject" type="text" placeholder="Contoh: Bahasa Melayu" /></div>
+            <div><label>Tahun / Tingkatan *</label><select id="scheduleGroup"></select></div>
+            <div><label>Jenis Slot *</label><select id="scheduleMode"><option value="individual">One-to-One / Individu</option><option value="pksk">PKSK</option></select></div>
+            <div><label>Topik <span class="muted">(pilihan)</span></label><input id="scheduleTopic" type="text" placeholder="Contoh: Karangan" /></div>
+            <div class="full-row actions"><button class="primary" type="button" onclick="saveScheduleItem()">Simpan Jadual</button><button id="cancelScheduleEditBtn" class="ghost hidden" type="button" onclick="cancelScheduleEdit()">Batal Edit</button></div>
+          </div>
+          <div class="section-divider"></div>
+          <div class="section-head-row"><div><h3>Senarai Jadual Semasa</h3><p class="meta">Gunakan Edit atau Padam untuk mengurus slot yang telah diwujudkan.</p></div></div>
+          <div id="adminScheduleList" class="cards"></div>
+        </div>
+
+        <div id="adminMentees" class="admin-pane">
+          <div class="notice info">Gunakan halaman ini untuk mengemas kini nama, gambar dan gambaran ringkas mentee. Perubahan akan dipaparkan terus pada halaman <b>Kenali Mentee</b>.</div>
+          <div id="adminMenteeList" class="directory-groups"></div>
+        </div>
+
+        <div id="adminNotifications" class="admin-pane">
+          <div class="section-head-row"><h3>Notifikasi Pentadbir</h3><button class="ghost" onclick="markAllAdminNotificationsRead()">Tanda Semua Dibaca</button></div>
+          <div id="adminNotificationList"></div>
+        </div>
+
+        <div id="adminEmailSettings" class="admin-pane">
+          <div class="notice info"><b>Notifikasi e-mel sebenar:</b> masukkan Webhook URL daripada Make, Zapier, Pipedream, Google Apps Script atau Supabase Edge Function. Tanpa webhook, notifikasi dalam sistem tetap berfungsi.</div>
+          <div class="settings-grid">
+            <div><label>E-mel Pentadbir</label><input id="emailAdminAddress" type="email" /></div>
+            <div><label>Webhook URL</label><input id="emailWebhookUrl" type="url" placeholder="https://..." /></div>
+            <label class="toggle-row full-row"><input id="emailEnabled" type="checkbox" /> Aktifkan penghantaran e-mel sebenar melalui webhook</label>
+            <div class="full-row actions"><button class="primary" onclick="saveEmailSettings()">Simpan Tetapan</button><button class="secondary" onclick="sendTestEmail()">Hantar E-mel Ujian</button></div>
+          </div>
+          <div class="section-divider"></div>
+          <h3>Log Penghantaran</h3>
+          <div id="emailLogList" class="email-log"></div>
+        </div>
+      </div>
+    </section>
+    <section class="sdg-static-bottom" aria-label="Matlamat Pembangunan Mampan berkaitan">
+      <div class="eyebrow">Matlamat Pembangunan Mampan</div>
+      <h2>SDG yang Disokong</h2>
+      <div class="sdg-static-cards">
+        <article class="sdg-static-card sdg3-static"><b>SDG 3</b><span>Kesihatan Baik & Kesejahteraan</span></article>
+        <article class="sdg-static-card sdg1-static"><b>SDG 1</b><span>Tiada Kemiskinan</span></article>
+        <article class="sdg-static-card sdg4-static"><b>SDG 4</b><span>Pendidikan Berkualiti</span></article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner"><div><b>HELAA KRK</b><br><span>Projek Komuniti Biro Hal Ehwal Luar, Alumni dan Antarabangsa Kolej Rahim Kajai UKM.</span></div><div class="footer-sdg"><span>SDG 3</span><span>SDG 1</span><span>SDG 4</span></div></div>
+  </footer>
+
+  <div id="bookingModal" class="modal">
+    <div class="modal-card">
+      <div class="modal-head"><div><div class="eyebrow">Tempahan Mentor</div><h3>Tempah Slot Mentee</h3></div><button class="close" onclick="closeModal('bookingModal')">×</button></div>
+      <input id="slotId" type="hidden" />
+      <div id="bookingSummary" class="booking-summary"></div>
+      <div class="form-grid">
+        <div><label>E-mel</label><input id="mentorEmail" type="email" readonly /></div>
+        <div><label>Nombor Matrik</label><input id="mentorMatric" type="text" readonly /></div>
+        <div class="full-row"><label>Nama Penuh Mentor *</label><input id="mentorName" type="text" required autocomplete="name" placeholder="Tulis nama penuh seperti rekod rasmi" /><div class="field-help">Wajib diisi sebelum tempahan dihantar. Nombor matrik diambil secara automatik daripada maklumat log masuk.</div></div>
+        <div class="full-row"><label>Pilih Mentee *</label><select id="studentSelect"></select><div id="studentHelp" class="field-help"></div></div>
+        <div class="full-row"><label>Sekiranya mentee pilihan tidak sesuai / tidak tersedia, adakah anda bersetuju Pentadbir mengatur mentee lain?</label><div class="choice"><label><input type="radio" name="reassignConsent" value="yes" checked /> Ya, saya bersetuju sekiranya diaturkan mentee lain.</label><label><input type="radio" name="reassignConsent" value="no" /> Tidak, saya hanya bersetuju dengan mentee yang saya pilih.</label></div></div>
+        <div class="full-row"><label>Catatan kepada Pentadbir <span class="muted">(pilihan)</span></label><textarea id="bookingNote"></textarea></div>
+      </div>
+      <div class="actions modal-actions"><button class="ghost" onclick="closeModal('bookingModal')">Batal</button><button class="primary" onclick="submitBooking()">Hantar Tempahan</button></div>
+    </div>
+  </div>
+
+  <div id="reassignModal" class="modal">
+    <div class="modal-card small-modal">
+      <div class="modal-head"><div><div class="eyebrow">Pentadbir</div><h3>Atur Semula Mentee</h3></div><button class="close" onclick="closeModal('reassignModal')">×</button></div>
+      <div id="reassignSummary" class="booking-summary"></div>
+      <label>Pilih mentee baharu</label>
+      <select id="reassignStudent"></select>
+      <label>Catatan kepada mentor</label>
+      <textarea id="reassignNote" placeholder="Contoh: Mentee asal telah dipadankan dengan mentor lain."></textarea>
+      <div class="actions modal-actions"><button class="ghost" onclick="closeModal('reassignModal')">Batal</button><button class="primary" onclick="confirmReassign()">Sahkan & Luluskan</button></div>
+    </div>
+  </div>
+
+  <div id="reportModal" class="modal">
+    <div class="modal-card report-modal-card">
+      <div class="modal-head"><div><div class="eyebrow">Laporan Selepas Sesi</div><h3 id="reportModalTitle">Laporan Mentor</h3></div><button class="close" onclick="closeModal('reportModal')">×</button></div>
+      <input id="reportBookingId" type="hidden" />
+      <div id="reportSessionSummary" class="booking-summary"></div>
+      <div class="form-grid report-form">
+        <div class="full-row"><label>1. Apa yang anda ajar dalam sesi ini? *</label><textarea id="reportTaught"></textarea></div>
+        <div class="full-row"><label>2. Apakah kemajuan / perkara yang berjaya dicapai? *</label><textarea id="reportProgress"></textarea></div>
+        <div class="full-row"><label>3. Bagaimana reaksi, sikap dan penglibatan mentee? *</label><textarea id="reportReaction"></textarea></div>
+        <div class="full-row"><label>4. Apakah perkara yang masih memerlukan perhatian? *</label><textarea id="reportAttention"></textarea></div>
+        <div class="full-row"><label>5. Cadangan untuk sesi seterusnya</label><textarea id="reportNext"></textarea></div>
+      </div>
+      <div class="rating-panel"><h4>Penilaian Bintang</h4><div id="ratingQuestions" class="rating-grid"></div></div>
+      <div class="upload-zone"><label>Lampiran gambar / fail *</label><input id="reportFiles" type="file" multiple accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt" /><div class="field-help">Boleh pilih banyak gambar dan fail. Sekurang-kurangnya satu gambar diperlukan.</div></div>
+      <div id="existingReportAttachments" class="existing-attachments"></div>
+      <div id="reportAdminFeedback" class="notice warn hidden"></div>
+      <div class="actions modal-actions"><button class="ghost" onclick="closeModal('reportModal')">Batal</button><button class="primary" onclick="saveReport()">Hantar / Hantar Semula untuk Semakan</button></div>
+    </div>
+  </div>
+
+  <div id="menteeEditModal" class="modal">
+    <div class="modal-card small-modal">
+      <div class="modal-head"><div><div class="eyebrow">Pentadbir</div><h3>Edit Profil Mentee</h3></div><button class="close" onclick="closeModal('menteeEditModal')">×</button></div>
+      <input id="menteeEditId" type="hidden" />
+      <div class="mentee-edit-photo-wrap"><img id="menteeEditPhotoPreview" class="profile-photo large" alt="Gambar mentee" /></div>
+      <label>Nama ringkas *</label><input id="menteeEditName" type="text" />
+      <label>Gambaran ringkas</label><textarea id="menteeEditSummary" placeholder="Contoh: Suka aktiviti visual, cepat faham apabila diberi contoh langkah demi langkah."></textarea>
+      <label>Gambar mentee</label><input id="menteeEditPhoto" type="file" accept="image/*" />
+      <div class="actions modal-actions"><button class="ghost" onclick="closeModal('menteeEditModal')">Batal</button><button class="primary" onclick="saveMenteeProfile()">Simpan Perubahan</button></div>
+    </div>
+  </div>
+
+  <script>
+    // HTML-level login tab fallback. This works immediately, even before script.js is ready.
+    window.setLoginMode = window.setLoginMode || function(mode){
+      var mt=document.getElementById('mentorLoginTab'), at=document.getElementById('adminLoginTab');
+      var mp=document.getElementById('mentorLoginPane'), ap=document.getElementById('adminLoginPane');
+      if(!mt||!at||!mp||!ap) return;
+      mt.classList.toggle('active',mode==='mentor');
+      at.classList.toggle('active',mode==='admin');
+      mp.classList.toggle('active',mode==='mentor');
+      ap.classList.toggle('active',mode==='admin');
+    };
+  </script>
+  <script src="script.js?v=7.0.0"></script>
+</body>
+</html>
