@@ -143,6 +143,7 @@ let materials = loadWithFallback(KEYS.materials,"helaa_rukaiyah_materials_v2",[]
 let notifications = loadWithFallback(KEYS.notifications,"helaa_rukaiyah_notifications_v2",[]);
 let students = parseJSON(storageGet(KEYS.students),STUDENT_SEED.map(x=>({...x,summary:"",photoKey:""})));
 let mentorProfiles = parseJSON(storageGet(KEYS.profiles),[]);
+let mentorServiceRecords = [];
 let emailSettings = loadWithFallback(KEYS.emailSettings,"helaa_rukaiyah_email_settings_v3",{enabled:false,adminEmail:"",webhookUrl:""});
 let emailLog = loadWithFallback(KEYS.emailLog,"helaa_rukaiyah_email_log_v3",[]);
 let SCHEDULE = (()=>{
@@ -542,29 +543,137 @@ async function saveMentorProfile(){
   currentMatric=matric;storageSet(KEYS.sessionMatric,currentMatric);bookings.filter(b=>b.email?.toLowerCase()===currentEmail).forEach(b=>{b.mentorName=fullName;b.mentorMatric=matric});saveAll();refreshIdentity();renderMentorProfile();renderMentorDirectory();notify("*admin*",`Profil mentor dikemas kini: ${fullName} (${matric}).`,"info","mentor_profile_updated");alert("Profil Mentor berjaya disimpan.")
 }
 function mentorDirectoryEntries(){
-  const finals=bookings.filter(isFinalStatus);
-  const keys=[...new Set(finals.map(b=>b.userId||`matric:${b.mentorMatric||b.mentorName}`).filter(Boolean))];
-  return keys.map(key=>{
-    const bs=finals.filter(b=>(b.userId||`matric:${b.mentorMatric||b.mentorName}`)===key),fallback=bs[0];
-    const p=mentorProfiles.find(x=>x.id===fallback?.userId) || mentorProfiles.find(x=>String(x.matric||"").toUpperCase()===String(fallback?.mentorMatric||"").toUpperCase());
-    return {key,p,bs,name:p?.fullName||fallback?.mentorName||"Mentor",matric:p?.matric||fallback?.mentorMatric||"-"};
+  const serviceMatrics = adminMode
+    ? [...new Set(bookings.filter(isFinalStatus).map(b=>String(b.mentorMatric||"").trim().toUpperCase()).filter(Boolean))]
+    : [...new Set(mentorServiceRecords.map(r=>String(r.mentorMatric||"").trim().toUpperCase()).filter(Boolean))];
+
+  return serviceMatrics.map(matric=>{
+    const p=mentorProfiles.find(x=>String(x.matric||"").trim().toUpperCase()===matric);
+    const serviceRows=mentorServiceRowsForMatric(matric);
+    const fallback=serviceRows[0];
+    return {
+      key:`matric:${matric}`,
+      p,
+      serviceRows,
+      name:p?.fullName||fallback?.mentorName||"Mentor",
+      matric:p?.matric||matric
+    };
   }).filter(x=>adminMode || x.p?.publicConsent);
 }
 function renderMentorDirectory(){
   const cards=mentorDirectoryEntries();
-  $("mentorDirectoryList").innerHTML=cards.length?cards.map(x=>`<article class="mentor-card mentor-card-clickable" role="button" tabindex="0" onclick="openMentorDirectoryProfile(decodeURIComponent('${encodeURIComponent(x.key)}'))" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openMentorDirectoryProfile(decodeURIComponent('${encodeURIComponent(x.key)}'))}"><div class="mentor-card-top"><img class="profile-photo" ${x.p?.photoKey?`data-file-key="${esc(x.p.photoKey)}"`:""} alt="Gambar mentor"><div><h4>${esc(x.name)}</h4><div class="matric">${esc(x.matric)}</div><div class="meta">${esc(x.p?.faculty||"Fakulti belum dilengkapkan")}<br>${esc(x.p?.course||"")}</div></div></div>${x.p?.about?`<p>${esc(x.p.about)}</p>`:""}<div class="tag-list">${(x.p?.subjects||[]).slice(0,6).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div><div class="service-count">${x.bs.length} sesi / tugasan mentor direkodkan</div><div class="mentor-card-hint">Tekan untuk lihat profil penuh</div></article>`).join(""):'<div class="empty">Belum ada mentor yang bersetuju memaparkan profil dan mempunyai tempahan yang diluluskan.</div>';
+  $("mentorDirectoryList").innerHTML=cards.length?cards.map(x=>`
+    <article class="mentor-card mentor-card-clickable" role="button" tabindex="0"
+      onclick="openMentorDirectoryProfile('${esc(x.matric)}')"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openMentorDirectoryProfile('${esc(x.matric)}')}">
+      <div class="mentor-card-top">
+        <img class="profile-photo" ${x.p?.photoKey?`data-file-key="${esc(x.p.photoKey)}"`:""} alt="Gambar mentor">
+        <div>
+          <h4>${esc(x.name)}</h4>
+          <div class="matric">${esc(x.matric)}</div>
+          <div class="meta">${esc(x.p?.faculty||"Fakulti belum dilengkapkan")}<br>${esc(x.p?.course||"")}</div>
+        </div>
+      </div>
+      ${x.p?.about?`<p>${esc(x.p.about)}</p>`:""}
+      <div class="tag-list">${(x.p?.subjects||[]).slice(0,6).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div>
+      <div class="service-count">${x.serviceRows.length} sesi / tugasan mentor direkodkan</div>
+      <div class="mentor-card-hint">Tekan untuk lihat profil dan rekod khidmat</div>
+    </article>`).join(""):'<div class="empty">Belum ada mentor yang mempunyai rekod khidmat untuk dipaparkan.</div>';
   hydrateStoredImages($("mentorDirectory"))
 }
-function openMentorDirectoryProfile(key){
-  const x=mentorDirectoryEntries().find(e=>e.key===key);if(!x)return;
+function serviceStatusLabel(status){
+  return ({
+    pending:"Menunggu Semakan",
+    approved:"Diluluskan",
+    reassigned:"Diatur Semula",
+    rejected:"Ditolak",
+    reverted:"Dibuka Semula",
+    withdrawn:"Tarik Diri",
+    cancelled:"Dibatalkan"
+  })[status]||status||"-";
+}
+function mentorServiceHistoryHtml(rows,showAll=false){
+  if(!rows.length)return '<div class="empty compact">Belum ada rekod mentor-mentee.</div>';
+  return `<div class="mentor-service-history">${rows.map((r,i)=>`
+    <article class="mentor-service-record">
+      <div class="mentor-service-record-head">
+        <div><b>${esc(r.menteeName||"Mentee")}</b><span>${esc(r.subject||"-")} • ${esc(r.group||"-")}</span></div>
+        <span class="badge ${["approved","reassigned"].includes(r.bookingStatus)?"ok":r.bookingStatus==="pending"?"pending":r.bookingStatus==="withdrawn"||r.bookingStatus==="cancelled"?"returned":"info"}">${esc(serviceStatusLabel(r.bookingStatus))}</span>
+      </div>
+      <div class="mentor-service-meta">${r.classDate?esc(fmtDate(r.classDate)):"-"} • ${esc(r.time||"-")}</div>
+      ${r.reportStatus==="approved"
+        ? `<div class="mentor-service-report-status">Laporan Aktiviti: <b>Diluluskan</b>${r.reportId?` <button class="link-btn" type="button" onclick="closeModal('mentorDirectoryProfileModal');switchTab('approvedReports')">Lihat Laporan Aktiviti</button>`:""}</div>`
+        : `<div class="mentor-service-report-status muted">Laporan Aktiviti: ${r.reportStatus?esc(statusLabel(r.reportStatus)):"Belum ada laporan diluluskan"}</div>`}
+    </article>`).join("")}</div>`;
+}
+function openMentorDirectoryProfile(matric){
+  const key=String(matric||"").trim().toUpperCase();
+  const x=mentorDirectoryEntries().find(e=>String(e.matric||"").trim().toUpperCase()===key);
+  if(!x)return;
   const p=x.p||{};
   const img=p.photoKey?`<img class="profile-photo large" data-file-key="${esc(p.photoKey)}" alt="Gambar ${esc(x.name)}">`:`<div class="mentor-popup-photo-placeholder">Tiada gambar</div>`;
   const subjects=(p.subjects||[]).length?(p.subjects||[]).map(s=>`<span class="tag">${esc(s)}</span>`).join(""):'<span class="muted">Belum dinyatakan</span>';
   const levels=(p.levels||[]).length?(p.levels||[]).map(s=>`<span class="tag level-tag">${esc(s)}</span>`).join(""):'<span class="muted">Belum dinyatakan</span>';
-  const adminContact=adminMode?`<div class="mentor-popup-private"><div class="eyebrow">Maklumat Pentadbir Sahaja</div><div class="mentor-popup-kv"><b>E-mel</b><span>${esc(p.email||"Belum diisi")}</span><b>No. Telefon</b><span>${esc(p.phone||"Belum diisi")}</span><b>Kebenaran Paparan</b><span>${p.publicConsent?"Ya":"Tidak"}</span></div></div>`:`<div class="privacy-note">Alamat e-mel dan nombor telefon tidak dipaparkan kepada pengguna umum. Maklumat hubungan hanya boleh diakses oleh Pentadbir.</div>`;
+
+  const publicRows=mentorServiceRowsForMatric(x.matric);
+  const allRows=adminMode?mentorServiceRowsForMatric(x.matric,{allStatuses:true}):publicRows;
+
+  let adminExtra="";
+  if(adminMode){
+    const total=allRows.length;
+    const approved=allRows.filter(r=>["approved","reassigned"].includes(r.bookingStatus)).length;
+    const pending=allRows.filter(r=>r.bookingStatus==="pending").length;
+    const withdrawn=allRows.filter(r=>["withdrawn","cancelled"].includes(r.bookingStatus)).length;
+    const rejected=allRows.filter(r=>r.bookingStatus==="rejected").length;
+    adminExtra=`
+      <div class="mentor-popup-private">
+        <div class="eyebrow">Maklumat Pentadbir Sahaja</div>
+        <div class="mentor-popup-kv">
+          <b>E-mel</b><span>${esc(p.email||"Belum diisi")}</span>
+          <b>No. Telefon</b><span>${esc(p.phone||"Belum diisi")}</span>
+          <b>Kebenaran Paparan</b><span>${p.publicConsent?"Ya":"Tidak"}</span>
+        </div>
+        <div class="mentor-admin-stats">
+          <div><b>${total}</b><span>Jumlah Tempahan</span></div>
+          <div><b>${approved}</b><span>Dilulus / Diatur Semula</span></div>
+          <div><b>${pending}</b><span>Menunggu</span></div>
+          <div><b>${withdrawn}</b><span>Tarik Diri / Batal</span></div>
+          <div><b>${rejected}</b><span>Ditolak</span></div>
+        </div>
+      </div>`;
+  }else{
+    adminExtra=`<div class="privacy-note">Alamat e-mel dan nombor telefon tidak dipaparkan kepada Mentor/pengguna umum. Maklumat hubungan hanya boleh diakses oleh Pentadbir.</div>`;
+  }
+
   $("mentorDirectoryPopupName").textContent=x.name;
-  $("mentorDirectoryPopupContent").innerHTML=`<div class="mentor-popup-layout"><div class="mentor-popup-photo">${img}<div class="service-count">${x.bs.length} sesi / tugasan direkodkan</div></div><div class="mentor-popup-details"><div class="mentor-popup-kv"><b>Nombor Matrik</b><span>${esc(x.matric)}</span><b>Fakulti</b><span>${esc(p.faculty||"Belum dilengkapkan")}</span><b>Program / Jurusan</b><span>${esc(p.course||"Belum dilengkapkan")}</span><b>Kekuatan Mengajar</b><span>${esc(p.strength||"Belum dinyatakan")}</span></div><h4>Tentang Mentor</h4><p>${esc(p.about||"Belum dilengkapkan")}</p><h4>Subjek yang Boleh Diajar</h4><div class="tag-list">${subjects}</div><h4>Tahap yang Yakin untuk Diajar</h4><div class="tag-list">${levels}</div>${adminContact}</div></div>`;
-  $("mentorDirectoryProfileModal").classList.add("open");hydrateStoredImages($("mentorDirectoryProfileModal"));
+  $("mentorDirectoryPopupContent").innerHTML=`
+    <div class="mentor-popup-layout">
+      <div class="mentor-popup-photo">
+        ${img}
+        <div class="service-count">${publicRows.length} sesi / tugasan khidmat direkodkan</div>
+      </div>
+      <div class="mentor-popup-details">
+        <div class="mentor-popup-kv">
+          <b>Nombor Matrik</b><span>${esc(x.matric)}</span>
+          <b>Fakulti</b><span>${esc(p.faculty||"Belum dilengkapkan")}</span>
+          <b>Program / Jurusan</b><span>${esc(p.course||"Belum dilengkapkan")}</span>
+          <b>Kekuatan Mengajar</b><span>${esc(p.strength||"Belum dinyatakan")}</span>
+        </div>
+        <h4>Tentang Mentor</h4>
+        <p>${esc(p.about||"Belum dilengkapkan")}</p>
+        <h4>Subjek yang Boleh Diajar</h4>
+        <div class="tag-list">${subjects}</div>
+        <h4>Tahap yang Yakin untuk Diajar</h4>
+        <div class="tag-list">${levels}</div>
+        ${adminExtra}
+      </div>
+    </div>
+    <div class="mentor-history-section">
+      <div class="section-head-row"><div><div class="eyebrow">${adminMode?"Rekod Pentadbir":"Rekod Khidmat"}</div><h3>${adminMode?"Semua Rekod Mentor-Mentee":"Rekod Mentor-Mentee"}</h3></div><span class="mini-status">${adminMode?allRows.length:publicRows.length} rekod</span></div>
+      ${mentorServiceHistoryHtml(adminMode?allRows:publicRows,adminMode)}
+    </div>`;
+  $("mentorDirectoryProfileModal").classList.add("open");
+  hydrateStoredImages($("mentorDirectoryProfileModal"));
 }
 
 // ---------- Mentee profiles ----------
@@ -853,6 +962,52 @@ function mapPublicMentorProfile(r){return {id:r.id,email:"",fullName:r.full_name
 function mapMentee(r){return {id:r.id,name:r.full_name||r.short_name||"",shortName:r.short_name||"",group:r.group_name,summary:r.description||"",photoKey:r.photo_path?sbFileKey("mentee-photos",r.photo_path):""}}
 function mapSlot(r){return {id:r.id,date:r.class_date,day:scheduleDayName(r.class_date),time:r.time_label,subject:r.subject,group:r.group_name,mode:r.mode||"individual",topic:r.topic||""}}
 function mapBooking(r){const s=slotById(r.slot_id);return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:r.mentor_email||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:r.allow_reassignment?"yes":"no",mentorNote:r.mentor_note||"",adminNote:r.admin_note||"",withdrawalReason:r.withdrawal_reason||"",withdrawnBy:r.withdrawn_by||"",withdrawnAt:r.withdrawn_at||"",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at}}
+function mapMentorServiceRecord(r){
+  return {
+    bookingId:r.booking_id,
+    mentorMatric:r.mentor_matric||"",
+    mentorName:r.mentor_name||"",
+    menteeName:r.mentee_name||"",
+    subject:r.subject||"",
+    group:r.group_name||"",
+    classDate:r.class_date||"",
+    time:r.time_label||"",
+    bookingStatus:r.booking_status||"",
+    reportStatus:r.report_status||"",
+    reportId:r.report_id||null
+  };
+}
+function bookingToMentorServiceRecord(b){
+  const s=slotById(b.slotId);
+  const report=reports.find(r=>r.bookingId===b.id);
+  return {
+    bookingId:b.id,
+    mentorMatric:b.mentorMatric||"",
+    mentorName:b.mentorName||"",
+    menteeName:bookingStudentName(b),
+    subject:s?.subject||"",
+    group:s?.group||"",
+    classDate:s?.date||"",
+    time:s?.time||"",
+    bookingStatus:b.status||"",
+    reportStatus:report?.status||"",
+    reportId:report?.id||null
+  };
+}
+function mentorServiceRowsForMatric(matric,{allStatuses=false}={}){
+  const key=String(matric||"").trim().toUpperCase();
+  if(!key)return [];
+  if(adminMode){
+    return bookings
+      .filter(b=>String(b.mentorMatric||"").trim().toUpperCase()===key)
+      .filter(b=>allStatuses || ["approved","reassigned"].includes(b.status))
+      .map(bookingToMentorServiceRecord)
+      .sort((a,b)=>String(b.classDate).localeCompare(String(a.classDate)));
+  }
+  return mentorServiceRecords
+    .filter(r=>String(r.mentorMatric||"").trim().toUpperCase()===key)
+    .sort((a,b)=>String(b.classDate).localeCompare(String(a.classDate)));
+}
 function mapPublicBooking(r){
   const s=slotById(r.slot_id);
   return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:"no",mentorNote:"",adminNote:"",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at};
@@ -862,7 +1017,7 @@ function mapReport(r,atts){return {id:r.id,bookingId:r.booking_id,taught:r.taugh
 async function loadSupabaseState(){
   if(!supabaseClient||supabaseLoading)return;supabaseLoading=true;
   try{
-    const [p,m,s,b,r,ra,ma,mf,n,pb,pd]=await Promise.all([
+    const [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh]=await Promise.all([
       supabaseClient.from("profiles").select("*"),
       supabaseClient.from("mentees").select("*").eq("active",true),
       supabaseClient.from("schedule_slots").select("*").eq("active",true),
@@ -873,14 +1028,16 @@ async function loadSupabaseState(){
       supabaseClient.from("material_files").select("*"),
       supabaseClient.from("notifications").select("*").order("created_at",{ascending:false}),
       supabaseClient.rpc("mentor_public_booking_snapshot"),
-      supabaseClient.rpc("mentor_public_directory")
+      supabaseClient.rpc("mentor_public_directory"),
+      supabaseClient.rpc("mentor_service_history")
     ]);
-    for(const x of [p,m,s,b,r,ra,ma,mf,n,pb,pd])if(x.error)console.warn("Supabase load:",x.error.message);
+    for(const x of [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh])if(x.error)console.warn("Supabase load:",x.error.message);
     {
       const ownOrAdmin=(p.data||[]).map(mapProfile);
       const publicProfiles=adminMode?[]:(pd.data||[]).map(mapPublicMentorProfile);
       mentorProfiles=mergeMentorProfileRows([...ownOrAdmin,...publicProfiles]);
     }
+    mentorServiceRecords=(msh.data||[]).map(mapMentorServiceRecord);
     if(m.data)students=m.data.map(mapMentee);
     if(s.data&&s.data.length){SCHEDULE=s.data.map(mapSlot).sort(scheduleSort);if(!SCHEDULE.some(x=>x.date===selectedDate))selectedDate=SCHEDULE[0]?.date||""}
     if(adminMode){
