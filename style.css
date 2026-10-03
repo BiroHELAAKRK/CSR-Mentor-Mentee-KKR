@@ -116,3 +116,21 @@ button{cursor:pointer}
 .footer-sdg span:nth-child(1){background:#e5243b;color:#fff}
 .footer-sdg span:nth-child(2){background:#4c9f38;color:#fff}
 .footer-sdg span:nth-child(3){background:#c5192d;color:#fff}
+
+
+/* ===== v9 restored full-admin access ===== */
+.admin-quick-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 16px;padding:12px 14px;border:1px solid #b8cad8;background:#eef5fa;border-radius:16px;color:#294a64;box-shadow:0 8px 22px rgba(39,70,94,.06)}
+.admin-quick-bar.hidden{display:none!important}
+.admin-quick-bar b{margin-right:4px}
+.admin-quick-bar button{border:1px solid #9fb7c8;background:#fff;color:#294a64;border-radius:999px;padding:8px 12px;font-weight:800;cursor:pointer}
+.admin-quick-bar button:hover{background:#dceaf4}
+.admin-inline-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;margin:12px 0 18px;border:1px dashed #9fb7c8;background:#f4f8fb;border-radius:14px;color:#526b7c}
+.admin-inline-tools.hidden{display:none!important}
+.admin-inline-tools span{font-size:.9rem}
+.sidebar-nav button.admin-only{width:100%}
+.schedule-admin-form{margin-top:12px}
+@media (max-width:720px){.admin-quick-bar{align-items:stretch}.admin-quick-bar button{width:100%;text-align:left}.admin-inline-tools{align-items:stretch}.admin-inline-tools button{width:100%}}
+
+
+/* v10.1 booking-role + notification workflow */
+.mentor-booking-status-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}.mentor-booking-status-tabs button{border:1px solid var(--line);background:#fff;color:var(--blue-deep);border-radius:999px;padding:9px 13px;font-weight:850;cursor:pointer}.mentor-booking-status-tabs button.active{background:var(--blue);border-color:var(--blue);color:#fff}.notification-clickable{width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}.popover-item.notification-clickable{display:block;border:0;border-bottom:1px solid #edf3fa;background:#fff}.popover-item.notification-clickable.unread{background:#eef7ff}.notification.notification-clickable{display:block}.notification-open-hint{margin-top:6px;font-size:10.5px;font-weight:900;color:var(--blue)}.admin-booking-card.review-open{border-color:#8eacc5;box-shadow:0 14px 32px rgba(52,77,101,.12)}.review-entry-actions{margin-top:12px}.booking-review-panel{margin-top:12px;padding-top:14px;border-top:1px dashed var(--line)}.compact-notice{margin-top:12px;margin-bottom:0;padding:10px 12px}.notification-focus{outline:3px solid rgba(88,117,144,.24);box-shadow:0 0 0 6px rgba(88,117,144,.08),0 14px 30px rgba(52,77,101,.12)}
