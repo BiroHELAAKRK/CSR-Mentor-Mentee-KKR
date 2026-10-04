@@ -359,6 +359,19 @@ button{cursor:pointer}
 #mentorRecognition .horizontal-table-wrap{margin-top:10px}
 #mentorProfileName,#mentorName{text-transform:uppercase}
 
+/* v12.9.1 mentor name admin correction */
+.mentor-popup-title-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.mentor-popup-title-row h3{margin:0}
+.mentor-popup-title-row .secondary{
+  padding:7px 10px;
+  font-size:10px;
+}
+
   </style>
 </head>
 <body>
@@ -971,7 +984,7 @@ button{cursor:pointer}
 
   <div id="mentorDirectoryProfileModal" class="modal">
     <div class="modal-card mentor-directory-modal-card">
-      <div class="modal-head"><div><div class="eyebrow">Profil Mentor</div><h3 id="mentorDirectoryPopupName">Mentor</h3></div><button class="close" type="button" onclick="closeModal('mentorDirectoryProfileModal')">×</button></div>
+      <div class="modal-head"><div><div class="eyebrow">Profil Mentor</div><div class="mentor-popup-title-row"><h3 id="mentorDirectoryPopupName">Mentor</h3><button id="mentorDirectoryEditNameBtn" class="secondary hidden" type="button">Edit Nama Mentor</button></div></div><button class="close" type="button" onclick="closeModal('mentorDirectoryProfileModal')">×</button></div>
       <div id="mentorDirectoryPopupContent"></div>
       <div class="actions modal-actions"><button class="primary" type="button" onclick="closeModal('mentorDirectoryProfileModal')">Tutup</button></div>
     </div>
@@ -1797,7 +1810,6 @@ function openMentorDirectoryProfile(matric){
           <b>No. Telefon</b><span>${esc(p.phone||"Belum diisi")}</span>
           <b>Kebenaran Paparan</b><span>${p.publicConsent?"Ya":"Tidak"}</span>
         </div>
-        <div class="actions" style="margin-top:12px"><button class="secondary" type="button" onclick="adminEditMentorName('${esc(x.matric)}')">Edit Nama Mentor</button></div>
         <div class="mentor-admin-stats">
           <div><b>${total}</b><span>Jumlah Tempahan</span></div>
           <div><b>${approved}</b><span>Dilulus / Diatur Semula</span></div>
@@ -1811,6 +1823,11 @@ function openMentorDirectoryProfile(matric){
   }
 
   $("mentorDirectoryPopupName").textContent=x.name;
+  const editNameBtn=$("mentorDirectoryEditNameBtn");
+  if(editNameBtn){
+    editNameBtn.classList.toggle("hidden",!adminMode);
+    editNameBtn.onclick=adminMode?()=>adminEditMentorName(x.matric):null;
+  }
   $("mentorDirectoryPopupContent").innerHTML=`
     <div class="mentor-popup-layout">
       <div class="mentor-popup-photo">
@@ -1854,7 +1871,7 @@ async function adminEditMentorName(matric){
   if(error){alert("Nama mentor tidak dapat dikemas kini: "+error.message);return}
   await loadSupabaseState();
   openMentorDirectoryProfile(String(matric||"").trim().toUpperCase());
-  alert("Nama mentor berjaya dikemas kini pada profil, tempahan dan laporan berkaitan.");
+  alert("Nama mentor berjaya dikemas kini dan diselaraskan pada profil, tempahan, laporan, Arkib Kelas dan rekod berkaitan.");
 }
 
 // ---------- Mentee profiles ----------

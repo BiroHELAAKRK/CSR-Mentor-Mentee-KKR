@@ -350,3 +350,16 @@ button{cursor:pointer}
 #mentorRecognition .admin-live-datebar{margin-top:14px}
 #mentorRecognition .horizontal-table-wrap{margin-top:10px}
 #mentorProfileName,#mentorName{text-transform:uppercase}
+
+/* v12.9.1 mentor name admin correction */
+.mentor-popup-title-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.mentor-popup-title-row h3{margin:0}
+.mentor-popup-title-row .secondary{
+  padding:7px 10px;
+  font-size:10px;
+}

@@ -804,7 +804,6 @@ function openMentorDirectoryProfile(matric){
           <b>No. Telefon</b><span>${esc(p.phone||"Belum diisi")}</span>
           <b>Kebenaran Paparan</b><span>${p.publicConsent?"Ya":"Tidak"}</span>
         </div>
-        <div class="actions" style="margin-top:12px"><button class="secondary" type="button" onclick="adminEditMentorName('${esc(x.matric)}')">Edit Nama Mentor</button></div>
         <div class="mentor-admin-stats">
           <div><b>${total}</b><span>Jumlah Tempahan</span></div>
           <div><b>${approved}</b><span>Dilulus / Diatur Semula</span></div>
@@ -818,6 +817,11 @@ function openMentorDirectoryProfile(matric){
   }
 
   $("mentorDirectoryPopupName").textContent=x.name;
+  const editNameBtn=$("mentorDirectoryEditNameBtn");
+  if(editNameBtn){
+    editNameBtn.classList.toggle("hidden",!adminMode);
+    editNameBtn.onclick=adminMode?()=>adminEditMentorName(x.matric):null;
+  }
   $("mentorDirectoryPopupContent").innerHTML=`
     <div class="mentor-popup-layout">
       <div class="mentor-popup-photo">
@@ -861,7 +865,7 @@ async function adminEditMentorName(matric){
   if(error){alert("Nama mentor tidak dapat dikemas kini: "+error.message);return}
   await loadSupabaseState();
   openMentorDirectoryProfile(String(matric||"").trim().toUpperCase());
-  alert("Nama mentor berjaya dikemas kini pada profil, tempahan dan laporan berkaitan.");
+  alert("Nama mentor berjaya dikemas kini dan diselaraskan pada profil, tempahan, laporan, Arkib Kelas dan rekod berkaitan.");
 }
 
 // ---------- Mentee profiles ----------
