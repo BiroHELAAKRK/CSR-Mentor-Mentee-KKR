@@ -318,7 +318,10 @@ button{cursor:pointer}
   .slot-group-grid{grid-template-columns:1fr}
 }
 
-</style>
+/* v12.7.6 Arkib Kelas */
+.archive-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0 18px}.archive-stat{border:1px solid var(--line);border-radius:14px;background:#f7fafc;padding:13px 15px}.archive-stat b{display:block;font-size:22px;color:#315b7d;line-height:1}.archive-stat span{display:block;margin-top:5px;color:var(--muted);font-size:10px;font-weight:800}.archive-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:16px;background:#fff}.archive-table{width:100%;border-collapse:collapse;min-width:820px}.archive-table th{background:#eef4f8;color:#294862;font-size:10px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:12px 13px;border-bottom:1px solid var(--line)}.archive-table td{padding:13px;vertical-align:top;border-bottom:1px solid #e7edf2;color:var(--ink);font-size:11px}.archive-table tbody tr:last-child td{border-bottom:0}.archive-table tbody tr:hover{background:#fbfdff}.archive-table td>b{display:block;font-size:11px}.archive-subline{display:block;margin-top:4px;color:var(--muted);font-size:9.5px}.archive-report-cell{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.archive-report-link{appearance:none;border:0;background:transparent;padding:0;color:#315b7d;text-decoration:underline;font-size:10px;font-weight:900;cursor:pointer}.archive-report-link:hover{color:#203d59}.archive-report-number{font-size:10px;font-weight:800}.archive-report-modal-card{max-width:860px}.archive-report-head{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:16px}.archive-report-head>div{border:1px solid var(--line);border-radius:12px;background:#f7fafc;padding:10px}.archive-report-head span{display:block;color:var(--muted);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}.archive-report-head b{display:block;margin-top:4px;font-size:11px;color:var(--ink)}.archive-report-head small{display:block;margin-top:3px;color:var(--muted)}.archive-report-readonly{display:grid;gap:9px}.archive-report-readonly>div{border:1px solid var(--line);border-radius:12px;padding:11px 12px}.archive-report-readonly h4,.archive-attachments h4{margin:0 0 6px;color:#315b7d;font-size:11px}.archive-report-readonly p{margin:0;color:#405168;font-size:11px;line-height:1.55;white-space:pre-wrap}.archive-rating-box{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0;border:1px solid #d8e1e8;border-radius:12px;background:#f7fafc;padding:11px 12px}.archive-rating-box span{color:#315b7d;font-size:15px;font-weight:950}.archive-attachments{margin-top:12px}@media(max-width:700px){.archive-summary{grid-template-columns:1fr 1fr 1fr}.archive-stat{padding:10px}.archive-stat b{font-size:18px}.archive-stat span{font-size:8px}.archive-table-wrap{border:0;background:transparent;overflow:visible}.archive-table{min-width:0;border-collapse:separate;border-spacing:0 10px}.archive-table thead{display:none}.archive-table,.archive-table tbody,.archive-table tr,.archive-table td{display:block;width:100%}.archive-table tr{border:1px solid var(--line);border-radius:14px;background:#fff;padding:7px 10px}.archive-table td{display:grid;grid-template-columns:105px minmax(0,1fr);gap:8px;padding:8px 4px;border-bottom:1px dashed #e3e9ee}.archive-table td:last-child{border-bottom:0}.archive-table td:before{content:attr(data-label);color:#6a7f91;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.05em}.archive-report-head{grid-template-columns:1fr 1fr}}
+
+  </style>
 </head>
 <body>
   <div id="loginOverlay" class="login-overlay">
@@ -402,6 +405,7 @@ button{cursor:pointer}
       <button data-tab="mybooking" class="mentor-only"><span>Tempahan Saya</span></button>
       <button data-tab="reports"><span>Laporan Saya</span></button>
       <button data-tab="approvedReports"><span>Laporan Aktiviti</span></button>
+      <button data-tab="classArchive"><span>Arkib Kelas</span></button>
       <button data-tab="materials"><span>Bahan Mengajar</span></button>
 
       <div class="nav-label">Komuniti</div>
@@ -470,6 +474,21 @@ button{cursor:pointer}
         <h2>Laporan Aktiviti yang Diluluskan</h2>
         <p class="lead">Laporan yang telah diluluskan dipaparkan dalam bentuk visual. Gambar aktiviti yang dimuat naik oleh mentor akan muncul di sini.</p>
         <div id="approvedReportGallery" class="report-gallery"></div>
+      </div>
+    </section>
+
+    <section id="classArchive" class="section">
+      <div class="panel">
+        <div class="eyebrow">Rekod Kelas</div>
+        <h2>Arkib Kelas</h2>
+        <p class="lead">Rekod kelas yang telah berlangsung disusun daripada yang paling baharu. Klik nombor laporan yang tersedia untuk membaca laporan aktiviti.</p>
+        <div class="archive-summary" id="classArchiveSummary"></div>
+        <div class="archive-table-wrap">
+          <table class="archive-table">
+            <thead><tr><th>Tarikh</th><th>Mentor</th><th>Mentee</th><th>Subjek</th><th>Status Laporan</th></tr></thead>
+            <tbody id="classArchiveBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -776,6 +795,20 @@ button{cursor:pointer}
     </div>
   </div>
 
+
+  <div id="archiveReportModal" class="modal">
+    <div class="modal-card archive-report-modal-card">
+      <div class="modal-head">
+        <div><div class="eyebrow">Arkib Kelas</div><h3 id="archiveReportTitle">Laporan Aktiviti</h3></div>
+        <button class="close" type="button" onclick="closeModal('archiveReportModal')">×</button>
+      </div>
+      <div id="archiveReportContent"></div>
+      <div class="actions modal-actions">
+        <button id="archiveReportPrintBtn" class="secondary" type="button">Cetak Laporan</button>
+        <button class="primary" type="button" onclick="closeModal('archiveReportModal')">Tutup</button>
+      </div>
+    </div>
+  </div>
 
   <div id="mentorDirectoryProfileModal" class="modal">
     <div class="modal-card mentor-directory-modal-card">
@@ -1244,6 +1277,7 @@ function switchTab(id){
   if(id==="mybooking")renderMyBookings();
   if(id==="reports")renderMentorReports();
   if(id==="approvedReports")renderApprovedReports();
+  if(id==="classArchive")renderClassArchive();
   if(id==="mentees")renderMentees();
   if(id==="mentorProfile")renderMentorProfile();
   if(id==="mentorDirectory")renderMentorDirectory();
@@ -1748,6 +1782,57 @@ function adminEditReport(id){
 function deleteReportRecord(id){
   if(!adminMode)return;const r=reports.find(x=>x.id===id);if(!r||!confirm("Padam laporan ini secara kekal?"))return;reports=reports.filter(x=>x.id!==id);saveAll();renderAll();alert("Laporan telah dipadam.")
 }
+
+function archiveReportNumber(reportId){
+  if(!reportId)return "";
+  return `RPT-${String(reportId).replace(/-/g,"").slice(0,8).toUpperCase()}`;
+}
+function archiveReportStatusLabel(status){
+  if(!status)return "Belum Dihantar";
+  return ({pending:"Menunggu Semakan",approved:"Diluluskan",returned:"Dipulangkan",rejected:"Tidak Diluluskan"})[status]||statusLabel(status);
+}
+function archiveReportBadgeClass(status){
+  if(!status)return "info";
+  if(status==="approved")return "ok";
+  if(status==="pending")return "pending";
+  if(status==="returned")return "returned";
+  if(status==="rejected")return "full";
+  return "info";
+}
+function archiveRecordHasEnded(r){return slotHasEnded({date:r.classDate,time:r.time})}
+function classArchiveRecords(){
+  return [...mentorServiceRecords]
+    .filter(r=>["approved","reassigned"].includes(r.bookingStatus))
+    .filter(archiveRecordHasEnded)
+    .sort((a,b)=>{
+      const d=String(b.classDate||"").localeCompare(String(a.classDate||""));if(d)return d;
+      const t=slotStartMinutes({time:b.time})-slotStartMinutes({time:a.time});if(t)return t;
+      return String(b.bookingId||"").localeCompare(String(a.bookingId||""));
+    });
+}
+function renderClassArchive(){
+  const body=$("classArchiveBody"),summary=$("classArchiveSummary");if(!body||!summary)return;
+  const rows=classArchiveRecords();
+  const sent=rows.filter(r=>!!r.reportId).length,approved=rows.filter(r=>r.reportStatus==="approved").length;
+  summary.innerHTML=`<div class="archive-stat"><b>${rows.length}</b><span>Kelas Direkodkan</span></div><div class="archive-stat"><b>${sent}</b><span>Laporan Dihantar</span></div><div class="archive-stat"><b>${approved}</b><span>Laporan Diluluskan</span></div>`;
+  if(!rows.length){body.innerHTML='<tr><td colspan="5"><div class="empty">Belum ada kelas yang telah selesai untuk dipaparkan dalam arkib.</div></td></tr>';return}
+  body.innerHTML=rows.map(r=>{
+    const no=archiveReportNumber(r.reportId),canOpen=!!r.reportId&&(adminMode||r.reportStatus==="approved");
+    const reportCell=!r.reportId?'<span class="badge info">Belum Dihantar</span>':`<div class="archive-report-cell"><span class="badge ${archiveReportBadgeClass(r.reportStatus)}">${esc(archiveReportStatusLabel(r.reportStatus))}</span>${canOpen?`<button class="archive-report-link" type="button" onclick="openArchiveReport('${esc(r.reportId)}')">${esc(no)}</button>`:`<span class="archive-report-number muted">${esc(no)}</span>`}</div>`;
+    return `<tr><td data-label="Tarikh"><b>${r.classDate?esc(fmtDate(r.classDate)):"-"}</b><span class="archive-subline">${esc(r.time||"-")}</span></td><td data-label="Mentor"><b>${esc(r.mentorName||"Mentor")}</b><span class="archive-subline">${esc(r.mentorMatric||"-")}</span></td><td data-label="Mentee"><b>${esc(r.menteeName||"Mentee")}</b></td><td data-label="Subjek"><b>${esc(r.subject||"-")}</b><span class="archive-subline">${esc(r.group||"-")}</span></td><td data-label="Status Laporan">${reportCell}</td></tr>`;
+  }).join("");
+}
+function openArchiveReport(reportId){
+  const r=reports.find(x=>x.id===reportId),service=mentorServiceRecords.find(x=>x.reportId===reportId);
+  if(!r){alert("Laporan ini belum boleh dipaparkan kepada pengguna ini.");return}
+  if(!adminMode&&r.status!=="approved"){alert("Laporan ini masih dalam semakan dan hanya boleh dilihat oleh Mentor berkenaan serta Pentadbir.");return}
+  const b=bookings.find(x=>x.id===r.bookingId),mentorName=b?.mentorName||service?.mentorName||"Mentor",mentorMatric=b?.mentorMatric||service?.mentorMatric||"-",menteeName=b?bookingStudentName(b):(service?.menteeName||"Mentee"),subject=service?.subject||slotById(b?.slotId)?.subject||"-",group=service?.group||slotById(b?.slotId)?.group||"-",date=service?.classDate||slotById(b?.slotId)?.date||"",time=service?.time||slotById(b?.slotId)?.time||"-";
+  const vals=(r.ratings||[]).map(Number).filter(Number.isFinite),avg=vals.length?(vals.reduce((a,c)=>a+c,0)/vals.length).toFixed(1):"-";
+  $("archiveReportTitle").textContent=`${archiveReportNumber(r.id)} • ${menteeName}`;
+  $("archiveReportContent").innerHTML=`<div class="archive-report-head"><div><span>Tarikh</span><b>${date?esc(fmtDate(date)):"-"}</b><small>${esc(time)}</small></div><div><span>Mentor</span><b>${esc(mentorName)}</b><small>${esc(mentorMatric)}</small></div><div><span>Mentee</span><b>${esc(menteeName)}</b><small>${esc(group)}</small></div><div><span>Subjek</span><b>${esc(subject)}</b><small>${esc(archiveReportStatusLabel(r.status))}</small></div></div><div class="archive-report-readonly"><div><h4>Apa yang diajar</h4><p>${esc(r.taught||"-")}</p></div><div><h4>Progress / kemajuan mentee</h4><p>${esc(r.progress||"-")}</p></div><div><h4>Reaksi, tingkah laku dan kefahaman</h4><p>${esc(r.reaction||"-")}</p></div><div><h4>Perkara yang perlu diberi perhatian</h4><p>${esc(r.attention||"-")}</p></div><div><h4>Cadangan sesi seterusnya</h4><p>${esc(r.next||"-")}</p></div></div><div class="archive-rating-box"><b>Purata Penilaian Sesi</b><span>${esc(avg)}/5.0 ★</span></div><div class="archive-attachments"><h4>Lampiran</h4>${reportAttachmentMarkup(r)}</div>${adminMode&&r.adminNote?`<div class="notice warn"><b>Catatan Pentadbir:</b> ${esc(r.adminNote)}</div>`:""}`;
+  $("archiveReportPrintBtn").onclick=()=>printMentorReport(reportId);$("archiveReportModal").classList.add("open");hydrateStoredImages($("archiveReportModal"));
+}
+
 function renderApprovedReports(){
   const list=reports.filter(r=>r.status==="approved").sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));
   $("approvedReportGallery").innerHTML=list.length?list.map(r=>{const b=bookings.find(x=>x.id===r.bookingId),s=slotById(b?.slotId),images=(r.attachments||[]).filter(a=>isImageType(a.type,a.name)),avg=(r.ratings||[]).length?((r.ratings.reduce((a,c)=>a+c,0))/r.ratings.length).toFixed(1):"-";if(!b)return"";return `<article class="report-story"><div class="report-cover">${images[0]?`<img data-file-key="${esc(images[0].key)}" alt="Aktiviti ${esc(bookingStudentName(b))}">`:`<span>Tiada gambar utama</span>`}</div><div class="report-body"><span class="approved-chip">LAPORAN DILULUSKAN</span><h3>${esc(bookingStudentName(b))}</h3><div class="meta">${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.subject)} • ${esc(s.group)}`:""}<br>Mentor: ${esc(b.mentorName)} • ${esc(b.mentorMatric||"-")}</div><div class="report-snippet"><b>Apa diajar:</b> ${esc(r.taught)}<br><b>Progress:</b> ${esc(r.progress)}<br><b>Reaksi / kefahaman:</b> ${esc(r.reaction||"-")}<br><b>Perlu perhatian:</b> ${esc(r.attention||"-")}<br><b>Cadangan sesi seterusnya:</b> ${esc(r.next||"-")}</div><div class="rating-summary">★★★★★ <span>${avg}/5</span></div><div class="actions"><button class="secondary" type="button" onclick="printMentorReport('${r.id}')">Cetak Laporan</button></div>${images.length>1?`<div class="report-thumbs">${images.slice(1,6).map(a=>`<img data-file-key="${esc(a.key)}" alt="Gambar aktiviti">`).join("")}</div>`:""}</div></article>`}).join(""):'<div class="empty">Belum ada laporan yang diluluskan.</div>';hydrateStoredImages($("approvedReportGallery"))
@@ -1979,7 +2064,7 @@ function refreshOpenBookingMenteeOptions(){
 }
 
 function renderAll(){
-  renderDays();renderSlots();renderMyBookings();renderMentorReports();renderApprovedReports();renderMentees();renderMentorDirectory();fillMaterialSlots();renderMaterials();renderNotifications();if(adminMode)renderAdminAll();refreshIdentity();refreshOpenBookingMenteeOptions()
+  renderDays();renderSlots();renderMyBookings();renderMentorReports();renderApprovedReports();renderClassArchive();renderMentees();renderMentorDirectory();fillMaterialSlots();renderMaterials();renderNotifications();if(adminMode)renderAdminAll();refreshIdentity();refreshOpenBookingMenteeOptions()
 }
 
 
@@ -2465,7 +2550,7 @@ Object.assign(window,{
   saveMaterialSet,cancelMaterialEdit,editMaterial,deleteMaterial,removeMaterialFile,
   openMenteeCreate,openMenteeEdit,saveMenteeProfile,deleteMentee,
   approveBooking,openReassign,confirmReassign,rejectBooking,revertBooking,restorePending,withdrawBooking,adminWithdrawBooking,adminEditBooking,deleteBookingRecord,
-  approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation
+  approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openArchiveReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation
 });
 
 // ---------- Initial setup ----------
@@ -2482,7 +2567,6 @@ function bindLoginControls(){
 
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init,{once:true});
 else init();
-
-</script>
+  </script>
 </body>
 </html>

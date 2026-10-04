@@ -443,6 +443,7 @@ function switchTab(id){
   if(id==="mybooking")renderMyBookings();
   if(id==="reports")renderMentorReports();
   if(id==="approvedReports")renderApprovedReports();
+  if(id==="classArchive")renderClassArchive();
   if(id==="mentees")renderMentees();
   if(id==="mentorProfile")renderMentorProfile();
   if(id==="mentorDirectory")renderMentorDirectory();
@@ -947,6 +948,57 @@ function adminEditReport(id){
 function deleteReportRecord(id){
   if(!adminMode)return;const r=reports.find(x=>x.id===id);if(!r||!confirm("Padam laporan ini secara kekal?"))return;reports=reports.filter(x=>x.id!==id);saveAll();renderAll();alert("Laporan telah dipadam.")
 }
+
+function archiveReportNumber(reportId){
+  if(!reportId)return "";
+  return `RPT-${String(reportId).replace(/-/g,"").slice(0,8).toUpperCase()}`;
+}
+function archiveReportStatusLabel(status){
+  if(!status)return "Belum Dihantar";
+  return ({pending:"Menunggu Semakan",approved:"Diluluskan",returned:"Dipulangkan",rejected:"Tidak Diluluskan"})[status]||statusLabel(status);
+}
+function archiveReportBadgeClass(status){
+  if(!status)return "info";
+  if(status==="approved")return "ok";
+  if(status==="pending")return "pending";
+  if(status==="returned")return "returned";
+  if(status==="rejected")return "full";
+  return "info";
+}
+function archiveRecordHasEnded(r){return slotHasEnded({date:r.classDate,time:r.time})}
+function classArchiveRecords(){
+  return [...mentorServiceRecords]
+    .filter(r=>["approved","reassigned"].includes(r.bookingStatus))
+    .filter(archiveRecordHasEnded)
+    .sort((a,b)=>{
+      const d=String(b.classDate||"").localeCompare(String(a.classDate||""));if(d)return d;
+      const t=slotStartMinutes({time:b.time})-slotStartMinutes({time:a.time});if(t)return t;
+      return String(b.bookingId||"").localeCompare(String(a.bookingId||""));
+    });
+}
+function renderClassArchive(){
+  const body=$("classArchiveBody"),summary=$("classArchiveSummary");if(!body||!summary)return;
+  const rows=classArchiveRecords();
+  const sent=rows.filter(r=>!!r.reportId).length,approved=rows.filter(r=>r.reportStatus==="approved").length;
+  summary.innerHTML=`<div class="archive-stat"><b>${rows.length}</b><span>Kelas Direkodkan</span></div><div class="archive-stat"><b>${sent}</b><span>Laporan Dihantar</span></div><div class="archive-stat"><b>${approved}</b><span>Laporan Diluluskan</span></div>`;
+  if(!rows.length){body.innerHTML='<tr><td colspan="5"><div class="empty">Belum ada kelas yang telah selesai untuk dipaparkan dalam arkib.</div></td></tr>';return}
+  body.innerHTML=rows.map(r=>{
+    const no=archiveReportNumber(r.reportId),canOpen=!!r.reportId&&(adminMode||r.reportStatus==="approved");
+    const reportCell=!r.reportId?'<span class="badge info">Belum Dihantar</span>':`<div class="archive-report-cell"><span class="badge ${archiveReportBadgeClass(r.reportStatus)}">${esc(archiveReportStatusLabel(r.reportStatus))}</span>${canOpen?`<button class="archive-report-link" type="button" onclick="openArchiveReport('${esc(r.reportId)}')">${esc(no)}</button>`:`<span class="archive-report-number muted">${esc(no)}</span>`}</div>`;
+    return `<tr><td data-label="Tarikh"><b>${r.classDate?esc(fmtDate(r.classDate)):"-"}</b><span class="archive-subline">${esc(r.time||"-")}</span></td><td data-label="Mentor"><b>${esc(r.mentorName||"Mentor")}</b><span class="archive-subline">${esc(r.mentorMatric||"-")}</span></td><td data-label="Mentee"><b>${esc(r.menteeName||"Mentee")}</b></td><td data-label="Subjek"><b>${esc(r.subject||"-")}</b><span class="archive-subline">${esc(r.group||"-")}</span></td><td data-label="Status Laporan">${reportCell}</td></tr>`;
+  }).join("");
+}
+function openArchiveReport(reportId){
+  const r=reports.find(x=>x.id===reportId),service=mentorServiceRecords.find(x=>x.reportId===reportId);
+  if(!r){alert("Laporan ini belum boleh dipaparkan kepada pengguna ini.");return}
+  if(!adminMode&&r.status!=="approved"){alert("Laporan ini masih dalam semakan dan hanya boleh dilihat oleh Mentor berkenaan serta Pentadbir.");return}
+  const b=bookings.find(x=>x.id===r.bookingId),mentorName=b?.mentorName||service?.mentorName||"Mentor",mentorMatric=b?.mentorMatric||service?.mentorMatric||"-",menteeName=b?bookingStudentName(b):(service?.menteeName||"Mentee"),subject=service?.subject||slotById(b?.slotId)?.subject||"-",group=service?.group||slotById(b?.slotId)?.group||"-",date=service?.classDate||slotById(b?.slotId)?.date||"",time=service?.time||slotById(b?.slotId)?.time||"-";
+  const vals=(r.ratings||[]).map(Number).filter(Number.isFinite),avg=vals.length?(vals.reduce((a,c)=>a+c,0)/vals.length).toFixed(1):"-";
+  $("archiveReportTitle").textContent=`${archiveReportNumber(r.id)} • ${menteeName}`;
+  $("archiveReportContent").innerHTML=`<div class="archive-report-head"><div><span>Tarikh</span><b>${date?esc(fmtDate(date)):"-"}</b><small>${esc(time)}</small></div><div><span>Mentor</span><b>${esc(mentorName)}</b><small>${esc(mentorMatric)}</small></div><div><span>Mentee</span><b>${esc(menteeName)}</b><small>${esc(group)}</small></div><div><span>Subjek</span><b>${esc(subject)}</b><small>${esc(archiveReportStatusLabel(r.status))}</small></div></div><div class="archive-report-readonly"><div><h4>Apa yang diajar</h4><p>${esc(r.taught||"-")}</p></div><div><h4>Progress / kemajuan mentee</h4><p>${esc(r.progress||"-")}</p></div><div><h4>Reaksi, tingkah laku dan kefahaman</h4><p>${esc(r.reaction||"-")}</p></div><div><h4>Perkara yang perlu diberi perhatian</h4><p>${esc(r.attention||"-")}</p></div><div><h4>Cadangan sesi seterusnya</h4><p>${esc(r.next||"-")}</p></div></div><div class="archive-rating-box"><b>Purata Penilaian Sesi</b><span>${esc(avg)}/5.0 ★</span></div><div class="archive-attachments"><h4>Lampiran</h4>${reportAttachmentMarkup(r)}</div>${adminMode&&r.adminNote?`<div class="notice warn"><b>Catatan Pentadbir:</b> ${esc(r.adminNote)}</div>`:""}`;
+  $("archiveReportPrintBtn").onclick=()=>printMentorReport(reportId);$("archiveReportModal").classList.add("open");hydrateStoredImages($("archiveReportModal"));
+}
+
 function renderApprovedReports(){
   const list=reports.filter(r=>r.status==="approved").sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));
   $("approvedReportGallery").innerHTML=list.length?list.map(r=>{const b=bookings.find(x=>x.id===r.bookingId),s=slotById(b?.slotId),images=(r.attachments||[]).filter(a=>isImageType(a.type,a.name)),avg=(r.ratings||[]).length?((r.ratings.reduce((a,c)=>a+c,0))/r.ratings.length).toFixed(1):"-";if(!b)return"";return `<article class="report-story"><div class="report-cover">${images[0]?`<img data-file-key="${esc(images[0].key)}" alt="Aktiviti ${esc(bookingStudentName(b))}">`:`<span>Tiada gambar utama</span>`}</div><div class="report-body"><span class="approved-chip">LAPORAN DILULUSKAN</span><h3>${esc(bookingStudentName(b))}</h3><div class="meta">${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.subject)} • ${esc(s.group)}`:""}<br>Mentor: ${esc(b.mentorName)} • ${esc(b.mentorMatric||"-")}</div><div class="report-snippet"><b>Apa diajar:</b> ${esc(r.taught)}<br><b>Progress:</b> ${esc(r.progress)}<br><b>Reaksi / kefahaman:</b> ${esc(r.reaction||"-")}<br><b>Perlu perhatian:</b> ${esc(r.attention||"-")}<br><b>Cadangan sesi seterusnya:</b> ${esc(r.next||"-")}</div><div class="rating-summary">★★★★★ <span>${avg}/5</span></div><div class="actions"><button class="secondary" type="button" onclick="printMentorReport('${r.id}')">Cetak Laporan</button></div>${images.length>1?`<div class="report-thumbs">${images.slice(1,6).map(a=>`<img data-file-key="${esc(a.key)}" alt="Gambar aktiviti">`).join("")}</div>`:""}</div></article>`}).join(""):'<div class="empty">Belum ada laporan yang diluluskan.</div>';hydrateStoredImages($("approvedReportGallery"))
@@ -1178,7 +1230,7 @@ function refreshOpenBookingMenteeOptions(){
 }
 
 function renderAll(){
-  renderDays();renderSlots();renderMyBookings();renderMentorReports();renderApprovedReports();renderMentees();renderMentorDirectory();fillMaterialSlots();renderMaterials();renderNotifications();if(adminMode)renderAdminAll();refreshIdentity();refreshOpenBookingMenteeOptions()
+  renderDays();renderSlots();renderMyBookings();renderMentorReports();renderApprovedReports();renderClassArchive();renderMentees();renderMentorDirectory();fillMaterialSlots();renderMaterials();renderNotifications();if(adminMode)renderAdminAll();refreshIdentity();refreshOpenBookingMenteeOptions()
 }
 
 
@@ -1664,7 +1716,7 @@ Object.assign(window,{
   saveMaterialSet,cancelMaterialEdit,editMaterial,deleteMaterial,removeMaterialFile,
   openMenteeCreate,openMenteeEdit,saveMenteeProfile,deleteMentee,
   approveBooking,openReassign,confirmReassign,rejectBooking,revertBooking,restorePending,withdrawBooking,adminWithdrawBooking,adminEditBooking,deleteBookingRecord,
-  approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation
+  approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openArchiveReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation
 });
 
 // ---------- Initial setup ----------
