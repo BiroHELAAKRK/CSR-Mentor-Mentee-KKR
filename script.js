@@ -145,6 +145,9 @@ let students = parseJSON(storageGet(KEYS.students),STUDENT_SEED.map(x=>({...x,su
 let mentorProfiles = parseJSON(storageGet(KEYS.profiles),[]);
 let mentorServiceRecords = [];
 let mentorEvaluations = [];
+let recycleBin = [];
+let logisticsEntries = [];
+let adminLiveDate = "";
 let emailSettings = loadWithFallback(KEYS.emailSettings,"helaa_rukaiyah_email_settings_v3",{enabled:false,adminEmail:"",webhookUrl:""});
 let emailLog = loadWithFallback(KEYS.emailLog,"helaa_rukaiyah_email_log_v3",[]);
 let SCHEDULE = (()=>{
@@ -444,6 +447,8 @@ function switchTab(id){
   if(id==="reports")renderMentorReports();
   if(id==="approvedReports")renderApprovedReports();
   if(id==="classArchive")renderClassArchive();
+  if(id==="logistics")renderLogisticsPage();
+  if(id==="recycleBin")renderRecycleBin();
   if(id==="mentees")renderMentees();
   if(id==="mentorProfile")renderMentorProfile();
   if(id==="mentorDirectory")renderMentorDirectory();
@@ -471,6 +476,7 @@ function switchAdminPane(id){
   if(id==="adminSchedule"){renderAdminSchedule();renderScheduleMenteeAvailability()}
   if(id==="adminReports")renderAdminReports();
   if(id==="bookings")renderAdminBookings();
+  if(id==="adminMentorLive")renderAdminMentorLive();
   if(id==="adminNotifications")renderNotifications();
   if(id==="adminEmailSettings")renderEmailSettings();
 }
@@ -1043,7 +1049,11 @@ function printMentorReportData(r,b,isDraft=false){
   <div class="section"><h2>5. Cadangan untuk sesi seterusnya</h2><div class="text">${esc(r.next||"Belum diisi")}</div></div>
   <div class="section"><h2>Penilaian Sesi</h2><table><thead><tr><th>Aspek</th><th style="width:110px;text-align:center">Skor</th></tr></thead><tbody>${ratingRows}</tbody></table></div>
   </div></body></html>`;
-  const w=window.open("","_blank","noopener,noreferrer");if(!w){alert("Popup disekat oleh browser. Benarkan popup untuk mencetak.");return}w.document.open();w.document.write(html);w.document.close();w.focus();
+  const oldFrame=document.getElementById("helaaPrintFrame");if(oldFrame)oldFrame.remove();
+  const frame=document.createElement("iframe");frame.id="helaaPrintFrame";frame.setAttribute("aria-hidden","true");frame.style.position="fixed";frame.style.right="0";frame.style.bottom="0";frame.style.width="1px";frame.style.height="1px";frame.style.border="0";frame.style.opacity="0";frame.style.pointerEvents="none";document.body.appendChild(frame);
+  const doc=frame.contentWindow.document;doc.open();doc.write(html);doc.close();
+  let printed=false;const doPrint=()=>{if(printed)return;printed=true;try{frame.contentWindow.focus();frame.contentWindow.print()}catch(err){console.error("Print error",err);alert("Paparan cetak tidak dapat dibuka. Sila cuba sekali lagi.")}setTimeout(()=>frame.remove(),4000)};
+  frame.onload=()=>setTimeout(doPrint,250);setTimeout(doPrint,750);
 }
 
 function printMentorReport(reportId){
@@ -1193,11 +1203,85 @@ function updateStats(){
   $("statMentors").textContent=mentorKeys.size;
   $("statMaterials").textContent=materials.length
 }
-function renderAdminAll(){if(!adminMode)return;renderAdminDashboard();renderAdminBookings();renderAdminReports();renderMaterials();renderAdminSchedule();renderAdminMentees();renderNotifications();renderEmailSettings();updateStats()}
+function renderAdminAll(){if(!adminMode)return;renderAdminDashboard();renderAdminBookings();renderAdminMentorLive();renderAdminReports();renderMaterials();renderAdminSchedule();renderAdminMentees();renderNotifications();renderEmailSettings();renderLogisticsPage();renderRecycleBin();updateStats()}
 function copyWhatsAppSummary(){
   const finals=bookings.filter(isFinalStatus).sort((a,b)=>(slotById(a.slotId)?.date||"").localeCompare(slotById(b.slotId)?.date||""));if(!finals.length){alert("Belum ada tempahan diluluskan.");return}
   const g={};finals.forEach(b=>{const s=slotById(b.slotId);(g[s.date] ||= []).push({b,s})});let t="*RINGKASAN MENTOR-MENTEE RUKAIYAH*\n";Object.entries(g).forEach(([d,arr])=>{t+=`\n*${arr[0].s.day}, ${fmtDate(d)}*\n`;arr.forEach(({b,s})=>t+=`• ${s.time} | ${s.subject} (${s.group}) | ${bookingStudentName(b)} → ${b.mentorName} (${b.mentorMatric||"-"})\n`)});navigator.clipboard?.writeText(t).then(()=>alert("Ringkasan disalin.")).catch(()=>prompt("Salin teks:",t))
 }
+
+
+// ---------- Recycle Bin ----------
+function recycleTypeLabel(type){return ({bookings:"Tempahan",reports:"Laporan",materials:"Bahan Mengajar",schedule_slots:"Jadual",mentees:"Mentee",mentor_evaluations:"Penilaian Mentor",logistics_entries:"Logistik"})[type]||type||"Rekod"}
+function renderRecycleBin(){
+  const box=$("recycleBinList");if(!box)return;
+  const rows=[...recycleBin].sort((a,b)=>new Date(b.deletedAt||0)-new Date(a.deletedAt||0));
+  if(!rows.length){box.innerHTML='<div class="empty">Belum ada rekod dalam Recycle Bin.</div>';return}
+  box.innerHTML=rows.map(x=>`<article class="recycle-item"><div class="recycle-main"><div><span class="badge info">${esc(recycleTypeLabel(x.recordType))}</span><h4>${esc(x.label||"Rekod")}</h4><div class="meta">Dipadam: ${x.deletedAt?fmtDateTime(x.deletedAt):"-"}<br>Oleh: ${esc(x.deletedByMatric||x.deletedByEmail||"Sistem")}</div></div>${adminMode?`<div class="meta recycle-owner">Pemilik rekod:<br><b>${esc(x.ownerMatric||x.ownerEmail||"-")}</b></div>`:""}</div><details><summary>Lihat butiran rekod</summary><pre>${esc(JSON.stringify(x.snapshot||{},null,2))}</pre></details></article>`).join("")
+}
+
+// ---------- Admin live mentor identification ----------
+function adminLiveDates(){return [...new Set(SCHEDULE.map(s=>s.date).filter(Boolean))].sort()}
+function ensureAdminLiveDate(){const dates=adminLiveDates();if(!dates.length){adminLiveDate="";return}if(!adminLiveDate||!dates.includes(adminLiveDate)){const today=malaysiaTodayISO();adminLiveDate=dates.includes(today)?today:(dates.find(d=>d>today)||dates[dates.length-1])}}
+function setAdminLiveDate(date){adminLiveDate=date;renderAdminMentorLive()}
+function shiftAdminLiveDate(delta){const dates=adminLiveDates();ensureAdminLiveDate();const i=dates.indexOf(adminLiveDate);if(i<0)return;const ni=i+Number(delta||0);if(ni<0||ni>=dates.length)return;adminLiveDate=dates[ni];renderAdminMentorLive()}
+function activeBookingForMenteeSlot(slotId,menteeId){return bookings.find(b=>b.slotId===slotId&&["pending","approved","reassigned"].includes(b.status)&&String(bookingStudentId(b)||"")===String(menteeId||""))||null}
+function mentorPhoneForBooking(b){if(!b)return "-";const p=profileByMatric(b.mentorMatric)||profileByEmail(b.email);return p?.phone?.trim()||"belum dinyatakan"}
+function renderAdminMentorLive(){
+  if(!adminMode)return;const body=$("adminMentorLiveBody"),dateInput=$("adminLiveDate"),stamp=$("adminLiveUpdated");if(!body)return;
+  ensureAdminLiveDate();if(dateInput)dateInput.value=adminLiveDate||"";if(stamp)stamp.textContent=`Dikemas kini ${new Date().toLocaleTimeString("ms-MY",{hour:"2-digit",minute:"2-digit"})}`;
+  const slots=SCHEDULE.filter(s=>s.date===adminLiveDate).sort(bookingSlotSort);const rows=[];
+  for(const s of slots){
+    if(s.mode==="pksk"){
+      const b=bookings.find(x=>x.slotId===s.id&&["pending","approved","reassigned"].includes(x.status))||null;
+      rows.push({s,mentee:"Ariana + Fathemah",b});continue;
+    }
+    for(const st of eligibleStudentsForSlot(s))rows.push({s,mentee:st.name,b:activeBookingForMenteeSlot(s.id,st.id)});
+  }
+  if(!rows.length){body.innerHTML='<tr><td colspan="5"><div class="empty">Tiada slot untuk tarikh ini.</div></td></tr>';return}
+  body.innerHTML=rows.map(({s,mentee,b})=>`<tr><td><b>${esc(s.day)}, ${fmtDate(s.date)}</b><span class="table-subline">${esc(s.time)} • ${esc(s.subject)}</span></td><td>${esc(s.group)}</td><td><b>${esc(mentee)}</b></td><td>${b?`<b>${esc(b.mentorName)}</b><span class="table-subline">${esc(b.mentorMatric||"-")} • ${esc(statusLabel(b.status))}</span>`:"-"}</td><td>${b?esc(mentorPhoneForBooking(b)):"-"}</td></tr>`).join("")
+}
+
+// ---------- Logistics & Transport ----------
+function logisticsMentorsForDate(date){
+  const slotIds=new Set(SCHEDULE.filter(s=>s.date===date).map(s=>s.id));const map=new Map();
+  bookings.filter(b=>slotIds.has(b.slotId)&&["pending","approved","reassigned"].includes(b.status)).forEach(b=>{const k=String(b.mentorMatric||b.email||b.userId||"").toUpperCase();if(k&&!map.has(k))map.set(k,{name:b.mentorName||"Mentor",matric:b.mentorMatric||"",email:b.email||""})});
+  return [...map.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),"ms"))
+}
+function updateLogisticsParticipantCount(){const el=$("logisticsParticipantCount");if(!el)return;el.textContent=`${document.querySelectorAll('input[name="logisticsParticipant"]:checked').length} dipilih`}
+function renderLogisticsParticipants(){
+  const date=$("logisticsDate")?.value||defaultBookingDate();const box=$("logisticsParticipantCheckboxes");if(!box)return;
+  if(!adminMode){const p=currentMentorProfile();if($("logisticsSelfName"))$("logisticsSelfName").textContent=p?.fullName||currentMatric||currentEmail||"Mentor semasa";return}
+  const mentors=logisticsMentorsForDate(date);box.innerHTML=mentors.length?mentors.map(m=>`<label class="choice logistics-participant"><input type="checkbox" name="logisticsParticipant" value="${esc(m.matric)}" data-name="${esc(m.name)}" onchange="updateLogisticsParticipantCount()" /><span><b>${esc(m.name)}</b><small>${esc(m.matric||"-")}</small></span></label>`).join(""):'<div class="empty compact">Belum ada mentor berdaftar untuk tarikh ini. Gunakan ruangan Individu Tambahan jika perlu.</div>';updateLogisticsParticipantCount()
+}
+function updateLogisticsVehicleFields(){const mode=$("logisticsMode")?.value||"own_car";const show=["own_car","carpool"].includes(mode);$("logisticsVehicleOwnerWrap")?.classList.toggle("hidden",!show);$("logisticsPlateWrap")?.classList.toggle("hidden",!show)}
+function renderLogisticsPage(){
+  const date=$("logisticsDate");if(!date)return;if(!date.value)date.value=defaultBookingDate()||malaysiaTodayISO();updateLogisticsVehicleFields();renderLogisticsParticipants();if(adminMode)renderLogisticsAdminResults()
+}
+async function submitLogisticsEntry(){
+  if(!supabaseClient||!currentUserId){alert("Sesi sistem tidak tersedia. Sila log masuk semula.");return}
+  const classDate=$("logisticsDate").value,mode=$("logisticsMode").value,carOwner=$("logisticsCarOwner").value.trim(),plate=$("logisticsPlate").value.trim().toUpperCase(),additional=$("logisticsAdditionalPeople").value.trim(),extra=$("logisticsExtraMaterials").value.trim(),adminNote=adminMode?$("logisticsAdminNote").value.trim():"";
+  if(!classDate||!mode){alert("Pilih tarikh dan mod pengangkutan.");return}
+  if(["own_car","carpool"].includes(mode)&&(!carOwner||!plate)){alert("Untuk kereta sendiri / car-pool, isi pemilik atau pemandu dan nombor plat.");return}
+  let participantMatrics=[],participantNames=[];
+  if(adminMode){document.querySelectorAll('input[name="logisticsParticipant"]:checked').forEach(x=>{participantMatrics.push(x.value);participantNames.push(x.dataset.name||x.value)})}
+  else{const p=currentMentorProfile();participantMatrics=[currentMatric];participantNames=[p?.fullName||currentMatric||currentEmail]}
+  if(!participantNames.length&&!additional){alert("Pilih sekurang-kurangnya seorang peserta atau isi Individu Tambahan.");return}
+  const payload={class_date:classDate,submitted_by:currentUserId,submitter_email:currentEmail,submitter_matric:currentMatric,submitter_name:currentMentorProfile()?.fullName||currentMatric||currentEmail,transport_mode:mode,car_owner:["own_car","carpool"].includes(mode)?carOwner:null,plate_no:["own_car","carpool"].includes(mode)?plate:null,participant_matrics:participantMatrics,participant_names:participantNames,additional_people:additional||null,extra_materials:extra||null,admin_note:adminNote||null,status:adminMode?"approved":"pending",reviewed_by:adminMode?currentUserId:null,reviewed_at:adminMode?new Date().toISOString():null};
+  let data=null,error=null;if(adminMode){const res=await supabaseClient.from("logistics_entries").insert(payload).select().single();data=res.data;error=res.error}else{const res=await supabaseClient.from("logistics_entries").insert(payload);error=res.error}if(error){alert("Maklumat logistik tidak dapat dihantar: "+error.message);return}
+  if(!adminMode)await pushNotification({audience:"admin",message:`Maklumat logistik baharu daripada ${payload.submitter_name} (${currentMatric}) untuk ${fmtDate(classDate)}.`,linkType:"logistics",linkId:null});
+  $("logisticsAdditionalPeople").value="";$("logisticsExtraMaterials").value="";if(adminMode)$("logisticsAdminNote").value="";document.querySelectorAll('input[name="logisticsParticipant"]:checked').forEach(x=>x.checked=false);await loadSupabaseState();speakThanks();alert(adminMode?"Maklumat logistik berjaya direkodkan dan diluluskan.":"Maklumat logistik berjaya dihantar untuk kelulusan Pentadbir.")
+}
+function logisticsApproved(){return logisticsEntries.filter(x=>x.status==="approved")}
+function renderLogisticsAdminResults(){
+  if(!adminMode)return;const body=$("logisticsAdminBody"),summary=$("logisticsSummary"),chart=$("logisticsModeChart"),vehicles=$("logisticsVehicleFrequency");if(!body)return;
+  const rows=[...logisticsEntries].sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0)),approved=rows.filter(x=>x.status==="approved"),pending=rows.filter(x=>x.status==="pending");
+  if(summary)summary.innerHTML=`<div class="archive-stat"><b>${rows.length}</b><span>JUMLAH REKOD</span></div><div class="archive-stat"><b>${pending.length}</b><span>MENUNGGU</span></div><div class="archive-stat"><b>${approved.length}</b><span>DILULUSKAN</span></div>`;
+  const modes=["own_car","carpool","grab","other"],counts=Object.fromEntries(modes.map(m=>[m,approved.filter(x=>x.transportMode===m).length])),max=Math.max(1,...Object.values(counts));if(chart)chart.innerHTML=modes.map(m=>`<div class="mini-bar-row"><span>${esc(transportModeLabel(m))}</span><div><i style="width:${Math.round(counts[m]/max*100)}%"></i></div><b>${counts[m]}</b></div>`).join("");
+  const plateMap=new Map();approved.filter(x=>x.plateNo).forEach(x=>{const k=x.plateNo.toUpperCase();const v=plateMap.get(k)||{plate:k,owner:x.carOwner||"-",count:0};v.count++;plateMap.set(k,v)});const ranked=[...plateMap.values()].sort((a,b)=>b.count-a.count);if(vehicles)vehicles.innerHTML=ranked.length?ranked.map(x=>`<div class="vehicle-frequency"><b>${esc(x.plate)}</b><span>${esc(x.owner)} • ${x.count} rekod</span></div>`).join(""):'<div class="meta">Belum ada rekod kenderaan diluluskan.</div>';
+  body.innerHTML=rows.length?rows.map(x=>`<tr><td><b>${x.classDate?esc(fmtDate(x.classDate)):"-"}</b><span class="table-subline">${x.createdAt?fmtDateTime(x.createdAt):""}</span></td><td>${esc(transportModeLabel(x.transportMode))}</td><td><b>${esc((x.participantNames||[]).join(", ")||"-")}</b>${x.additionalPeople?`<span class="table-subline">Tambahan: ${esc(x.additionalPeople)}</span>`:""}</td><td>${x.plateNo?`<b>${esc(x.plateNo)}</b><span class="table-subline">${esc(x.carOwner||"-")}</span>`:"-"}</td><td>${esc(x.extraMaterials||"-")}${x.adminNote?`<span class="table-subline">Catatan Pentadbir: ${esc(x.adminNote)}</span>`:""}</td><td>${badge(x.status==="approved"?"approved":x.status==="rejected"?"rejected":"pending")}</td><td>${x.status==="pending"?`<div class="actions compact-actions"><button class="primary" type="button" onclick="approveLogistics('${x.id}')">Luluskan</button><button class="danger" type="button" onclick="rejectLogistics('${x.id}')">Tidak Lulus</button></div>`:'-'}</td></tr>`).join(""):'<tr><td colspan="7"><div class="empty">Belum ada rekod logistik.</div></td></tr>'
+}
+async function approveLogistics(id){if(!adminMode)return;const x=logisticsEntries.find(r=>r.id===id);if(!x)return;const note=prompt("Catatan Pentadbir (pilihan):",x.adminNote||"");if(note===null)return;const {error}=await supabaseClient.from("logistics_entries").update({status:"approved",admin_note:note.trim()||null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert(error.message);return}if(x.submittedBy)await pushNotification({userId:x.submittedBy,message:`Maklumat logistik untuk ${fmtDate(x.classDate)} telah DILULUSKAN.`,linkType:"logistics",linkId:id});await loadSupabaseState()}
+async function rejectLogistics(id){if(!adminMode)return;const x=logisticsEntries.find(r=>r.id===id),note=prompt("Sebab / catatan tidak diluluskan:",x?.adminNote||"");if(!x||note===null)return;const {error}=await supabaseClient.from("logistics_entries").update({status:"rejected",admin_note:note.trim()||null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert(error.message);return}if(x.submittedBy)await pushNotification({userId:x.submittedBy,message:`Maklumat logistik untuk ${fmtDate(x.classDate)} tidak diluluskan.${note.trim()?` Catatan: ${note.trim()}`:""}`,linkType:"logistics",linkId:id});await loadSupabaseState()}
 
 // ---------- Email settings ----------
 function saveEmailSettings(){if(!adminMode)return;const admin=$("emailAdminAddress").value.trim().toLowerCase(),url=$("emailWebhookUrl").value.trim();if(admin&&!/^\S+@\S+\.\S+$/.test(admin)){alert("E-mel Pentadbir tidak sah.");return}if(url&&!/^https?:\/\//i.test(url)){alert("Webhook URL perlu bermula dengan http:// atau https://");return}emailSettings={enabled:$("emailEnabled").checked,adminEmail:admin,webhookUrl:url};saveAll();renderEmailSettings();alert("Tetapan e-mel disimpan.")}
@@ -1230,7 +1314,7 @@ function refreshOpenBookingMenteeOptions(){
 }
 
 function renderAll(){
-  renderDays();renderSlots();renderMyBookings();renderMentorReports();renderApprovedReports();renderClassArchive();renderMentees();renderMentorDirectory();fillMaterialSlots();renderMaterials();renderNotifications();if(adminMode)renderAdminAll();refreshIdentity();refreshOpenBookingMenteeOptions()
+  renderDays();renderSlots();renderMyBookings();renderMentorReports();renderApprovedReports();renderClassArchive();renderLogisticsPage();renderRecycleBin();renderMentees();renderMentorDirectory();fillMaterialSlots();renderMaterials();renderNotifications();if(adminMode)renderAdminAll();refreshIdentity();refreshOpenBookingMenteeOptions()
 }
 
 
@@ -1343,10 +1427,16 @@ function mentorEvaluationMarkup(reportId){
 }
 function mapReport(r,atts){return {id:r.id,bookingId:r.booking_id,taught:r.taught||"",progress:r.progress||"",reaction:r.reaction||"",attention:r.attention||"",next:r.next_session||"",ratings:[r.rating_focus||0,r.rating_understanding||0,r.rating_communication||0,r.rating_motivation||0,r.rating_rukaiyah||0],status:r.status,adminNote:r.admin_feedback||"",createdAt:r.submitted_at,updatedAt:r.updated_at,attachments:(atts||[]).filter(a=>a.report_id===r.id).map(a=>({id:a.id,key:sbFileKey("report-files",a.storage_path),name:a.file_name,type:a.mime_type||"application/octet-stream"}))}}
 
+
+function mapRecycleEntry(r){return {id:r.id,recordType:r.record_type||"rekod",recordId:r.record_id||"",label:r.record_label||"Rekod",deletedByEmail:r.deleted_by_email||"",deletedByMatric:r.deleted_by_matric||"",ownerEmail:r.owner_email||"",ownerMatric:r.owner_matric||"",snapshot:r.snapshot||{},deletedAt:r.deleted_at}}
+function mapLogisticsEntry(r){return {id:r.id,classDate:r.class_date||"",submittedBy:r.submitted_by||"",submitterEmail:r.submitter_email||"",submitterMatric:r.submitter_matric||"",submitterName:r.submitter_name||"",transportMode:r.transport_mode||"other",carOwner:r.car_owner||"",plateNo:r.plate_no||"",participantMatrics:r.participant_matrics||[],participantNames:r.participant_names||[],additionalPeople:r.additional_people||"",extraMaterials:r.extra_materials||"",adminNote:r.admin_note||"",status:r.status||"pending",createdAt:r.created_at,updatedAt:r.updated_at,reviewedBy:r.reviewed_by||"",reviewedAt:r.reviewed_at||null}}
+function transportModeLabel(mode){return ({own_car:"Kereta Sendiri",carpool:"Car-pool / Tumpang",grab:"Grab / E-hailing",other:"Lain-lain"})[mode]||mode||"-"}
+function logisticsStatusLabel(status){return ({pending:"Menunggu Kelulusan",approved:"Diluluskan",rejected:"Tidak Diluluskan"})[status]||status}
+
 async function loadSupabaseState(){
   if(!supabaseClient||supabaseLoading)return;supabaseLoading=true;
   try{
-    const [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh,mev]=await Promise.all([
+    const [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh,mev,rb,lg]=await Promise.all([
       supabaseClient.from("profiles").select("*"),
       supabaseClient.from("mentees").select("*").eq("active",true),
       supabaseClient.from("schedule_slots").select("*").eq("active",true),
@@ -1359,9 +1449,11 @@ async function loadSupabaseState(){
       supabaseClient.rpc("mentor_public_booking_snapshot"),
       supabaseClient.rpc("mentor_public_directory"),
       supabaseClient.rpc("mentor_service_history"),
-      supabaseClient.from("mentor_evaluations").select("*").order("updated_at",{ascending:false})
+      supabaseClient.from("mentor_evaluations").select("*").order("updated_at",{ascending:false}),
+      supabaseClient.from("recycle_bin").select("*").order("deleted_at",{ascending:false}),
+      supabaseClient.from("logistics_entries").select("*").order("created_at",{ascending:false})
     ]);
-    for(const x of [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh,mev])if(x.error)console.warn("Supabase load:",x.error.message);
+    for(const x of [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh,mev,rb,lg])if(x.error)console.warn("Supabase load:",x.error.message);
     {
       const ownOrAdmin=(p.data||[]).map(mapProfile);
       const publicProfiles=adminMode?[]:(pd.data||[]).map(mapPublicMentorProfile);
@@ -1369,6 +1461,8 @@ async function loadSupabaseState(){
     }
     mentorServiceRecords=(msh.data||[]).map(mapMentorServiceRecord);
     mentorEvaluations=(mev.data||[]).map(mapMentorEvaluation);
+    recycleBin=(rb.data||[]).map(mapRecycleEntry);
+    logisticsEntries=(lg.data||[]).map(mapLogisticsEntry);
     if(m.data)students=m.data.map(mapMentee);
     if(s.data&&s.data.length){SCHEDULE=s.data.map(mapSlot).sort(scheduleSort);if(!SCHEDULE.some(x=>x.date===selectedDate))selectedDate=SCHEDULE[0]?.date||""}
     if(adminMode){
@@ -1643,9 +1737,9 @@ async function deleteMentorEvaluation(){
 }
 async function markAllNotificationsRead(){const ids=currentNotifications().filter(n=>!n.read).map(n=>n.id);if(ids.length)await supabaseClient.from("notifications").update({is_read:true}).in("id",ids);await loadSupabaseState()}
 async function markAllAdminNotificationsRead(){const ids=notifications.filter(n=>n.target==="*admin*"&&!n.read).map(n=>n.id);if(ids.length)await supabaseClient.from("notifications").update({is_read:true}).in("id",ids);await loadSupabaseState()}
-async function openNotification(id){const n=notifications.find(x=>x.id===id);if(!n)return;await supabaseClient.from("notifications").update({is_read:true}).eq("id",id);n.read=true;renderNotifications();$("notificationPopover")?.classList.remove("open");const bookingId=notificationBookingId(n);if(bookingId){notificationFocusBookingId=bookingId;if(adminMode){activeReviewBookingId=bookingId;if($("statusFilter"))$("statusFilter").value="all";if($("adminSearch"))$("adminSearch").value="";switchTab("admin");switchAdminPane("bookings");renderAdminBookings();setTimeout(()=>document.getElementById(`admin-booking-${bookingId}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80)}else{setMentorBookingFilter("all");switchTab("mybooking");renderMyBookings()}return}if(n.event==="report"){if(adminMode){switchTab("admin");switchAdminPane("adminReports")}else switchTab("reports")}}
+async function openNotification(id){const n=notifications.find(x=>x.id===id);if(!n)return;await supabaseClient.from("notifications").update({is_read:true}).eq("id",id);n.read=true;renderNotifications();$("notificationPopover")?.classList.remove("open");const bookingId=notificationBookingId(n);if(bookingId){notificationFocusBookingId=bookingId;if(adminMode){activeReviewBookingId=bookingId;if($("statusFilter"))$("statusFilter").value="all";if($("adminSearch"))$("adminSearch").value="";switchTab("admin");switchAdminPane("bookings");renderAdminBookings();setTimeout(()=>document.getElementById(`admin-booking-${bookingId}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80)}else{setMentorBookingFilter("all");switchTab("mybooking");renderMyBookings()}return}if(n.event==="report"){if(adminMode){switchTab("admin");switchAdminPane("adminReports")}else switchTab("reports");return}if(n.event==="logistics"){switchTab("logistics");return}}
 
-function setupRealtime(){if(!supabaseClient||realtimeChannel)return;const refresh=()=>loadSupabaseState();realtimeChannel=supabaseClient.channel("helaa-rukaiyah-live").on("postgres_changes",{event:"*",schema:"public",table:"bookings"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"notifications"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"schedule_slots"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"materials"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"material_files"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentees"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"reports"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentor_evaluations"},refresh).subscribe()}
+function setupRealtime(){if(!supabaseClient||realtimeChannel)return;const refresh=()=>loadSupabaseState();realtimeChannel=supabaseClient.channel("helaa-rukaiyah-live").on("postgres_changes",{event:"*",schema:"public",table:"bookings"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"notifications"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"schedule_slots"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"materials"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"material_files"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentees"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"profiles"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"reports"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentor_evaluations"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"logistics_entries"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"recycle_bin"},refresh).subscribe()}
 
 async function init(){
   try{
@@ -1716,7 +1810,9 @@ Object.assign(window,{
   saveMaterialSet,cancelMaterialEdit,editMaterial,deleteMaterial,removeMaterialFile,
   openMenteeCreate,openMenteeEdit,saveMenteeProfile,deleteMentee,
   approveBooking,openReassign,confirmReassign,rejectBooking,revertBooking,restorePending,withdrawBooking,adminWithdrawBooking,adminEditBooking,deleteBookingRecord,
-  approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openArchiveReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation
+  approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openArchiveReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation,
+  renderRecycleBin,renderLogisticsPage,renderLogisticsParticipants,updateLogisticsVehicleFields,updateLogisticsParticipantCount,submitLogisticsEntry,approveLogistics,rejectLogistics,
+  renderAdminMentorLive,setAdminLiveDate,shiftAdminLiveDate
 });
 
 // ---------- Initial setup ----------
