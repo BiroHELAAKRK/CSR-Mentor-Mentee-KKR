@@ -174,3 +174,22 @@ button{cursor:pointer}
 .mentor-evaluation-private .stars-inline{color:#f59e0b;font-weight:900;letter-spacing:.06em}
 .mentor-evaluation-private .comment{margin-top:7px;font-size:12px;line-height:1.55;color:#405168}
 .mentor-evaluation-private .privacy{margin-top:7px;font-size:10px;color:#667085;font-weight:700}
+
+/* v12.6 slot-specific mentee availability + booking queue */
+.schedule-mentee-availability{margin-top:4px;border:1px solid var(--line);border-radius:16px;padding:14px;background:#f8fbfd}
+.schedule-mentee-availability .check-grid{margin-top:10px}
+.schedule-mentee-availability .choice-disabled{opacity:.62;cursor:not-allowed}
+.queue-status{margin-top:9px;display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.queue-chip{display:inline-flex;align-items:center;border-radius:999px;padding:5px 8px;font-size:10px;font-weight:900;background:#fff6df;color:#8a5900;border:1px solid #f3d59b}
+.queue-chip.open{background:#edf7f1;color:#16704a;border-color:#cbe8d7}
+.queue-chip.closed{background:#fff0f0;color:#a92c2c;border-color:#f2caca}
+.booking-age{margin-top:5px;font-size:10px;font-weight:800;color:#7b8794}
+.slot-unavailable-warning{margin-top:10px;padding:9px 11px;border-radius:11px;background:#fff3e5;border:1px solid #f0cf9f;color:#7b4c00;font-size:11px;font-weight:750}
+
+/* v12.7 automatic session completion */
+.badge.ended{background:#eef1f4;color:#586574}
+.slot.ended{background:#f7f8f9;border-color:#d9dee4}
+.slot.ended:before{background:#98a2ad}
+.slot.ended .subject,.slot.ended .group,.slot.ended .time{opacity:.78}
+.slot.ended .primary:disabled{background:#c7cdd3;color:#fff}
+.schedule-admin-card.schedule-ended{background:#fafbfc}

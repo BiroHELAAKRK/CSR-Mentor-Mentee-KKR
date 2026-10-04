@@ -183,11 +183,41 @@ function fmtDate(date){return new Date(date+"T00:00:00").toLocaleDateString("ms-
 function fmtDateTime(date){return new Date(date).toLocaleString("ms-MY",{dateStyle:"medium",timeStyle:"short"})}
 function slotById(id){return SCHEDULE.find(s=>s.id===id)}
 function studentById(id){return students.find(s=>s.id===id)}
-function profileByEmail(email){return mentorProfiles.find(p=>p.email.toLowerCase()===String(email||"").toLowerCase())}
+function profileByEmail(email){return mentorProfiles.find(p=>String(p.email||"").toLowerCase()===String(email||"").toLowerCase())}
+function profileByMatric(matric){const key=String(matric||"").trim().toUpperCase();return key?mentorProfiles.find(p=>String(p.matric||"").trim().toUpperCase()===key):null}
+function currentMentorProfile(){return profileByMatric(currentMatric)||profileByEmail(currentEmail)||null}
 function isFinalStatus(b){return ["approved","reassigned"].includes(b.status)}
 function approvedForSlot(id){return bookings.filter(b=>b.slotId===id&&isFinalStatus(b))}
 function makeTicket(){return "HL-"+Date.now().toString(36).slice(-6).toUpperCase()}
 function wordCount(text){return String(text||"").trim()?String(text).trim().split(/\s+/).length:0}
+
+function slotEndDateTime(slot){
+  if(!slot?.date||!slot?.time)return null;
+  const matches=[...String(slot.time).toUpperCase().matchAll(/(\d{1,2})(?:[:.](\d{2}))?\s*(AM|PM)/g)];
+  if(!matches.length)return null;
+  const m=matches[matches.length-1];
+  let h=Number(m[1]),min=Number(m[2]||0),ampm=m[3];
+  if(!Number.isFinite(h)||!Number.isFinite(min)||h<1||h>12||min<0||min>59)return null;
+  if(ampm==="PM"&&h!==12)h+=12;
+  if(ampm==="AM"&&h===12)h=0;
+  const d=new Date(`${slot.date}T${String(h).padStart(2,"0")}:${String(min).padStart(2,"0")}:00`);
+  return Number.isNaN(d.getTime())?null:d;
+}
+function slotHasEnded(slot,now=new Date()){
+  const end=slotEndDateTime(slot);
+  return !!end&&now.getTime()>=end.getTime();
+}
+let slotTimeWatcher=null;
+function setupSlotTimeWatcher(){
+  if(slotTimeWatcher)return;
+  slotTimeWatcher=setInterval(()=>{
+    try{
+      if($("slotGrid"))renderSlots();
+      if(adminMode&&$("adminScheduleList"))renderAdminSchedule();
+    }catch{}
+  },15000);
+}
+
 function isImageType(type,name=""){return String(type||"").startsWith("image/")||/\.(png|jpe?g|webp|gif)$/i.test(name)}
 function statusLabel(s){return({pending:"Menunggu Semakan",approved:"Diluluskan",reassigned:"Diatur Semula",rejected:"Tidak Diluluskan",reverted:"Dibuka Semula",returned:"Dipulangkan",cancelled:"Tarik Diri / Dibatalkan"})[s]||s}
 function badge(s){const c=s==="pending"?"pending":["approved","reassigned"].includes(s)?"ok":s==="returned"?"returned":s==="rejected"?"full":s==="cancelled"?"cancelled":"info";return `<span class="badge ${c}">${esc(statusLabel(s))}</span>`}
@@ -321,7 +351,7 @@ function setLoginMode(mode){
   $("mentorLoginPane").classList.toggle("active",mode==="mentor");$("adminLoginPane").classList.toggle("active",mode==="admin");
   setTimeout(()=>$(mode==="admin"?"adminEmail":"loginEmail")?.focus(),50)
 }
-function userDisplay(){const p=profileByEmail(currentEmail);return p?.fullName?`${p.fullName} • ${currentMatric}`:`${currentEmail} • ${currentMatric}`}
+function userDisplay(){const p=currentMentorProfile();return p?.fullName?`${p.fullName} • ${currentMatric}`:`${currentEmail} • ${currentMatric}`}
 function updateRoleNavigation(){
   document.querySelectorAll(".mentor-only").forEach(el=>el.classList.toggle("hidden",adminMode));
   document.querySelectorAll(".admin-only").forEach(el=>el.classList.toggle("hidden",!adminMode));
@@ -385,7 +415,7 @@ function switchAdminPane(id){
   if(id==="adminDashboard")renderAdminDashboard();
   if(id==="adminMentees")renderAdminMentees();
   if(id==="adminMaterials")renderMaterials();
-  if(id==="adminSchedule")renderAdminSchedule();
+  if(id==="adminSchedule"){renderAdminSchedule();renderScheduleMenteeAvailability()}
   if(id==="adminReports")renderAdminReports();
   if(id==="bookings")renderAdminBookings();
   if(id==="adminNotifications")renderNotifications();
@@ -394,6 +424,11 @@ function switchAdminPane(id){
 
 // ---------- Student helpers ----------
 function studentsInGroup(group){return students.filter(s=>s.group===group)}
+function slotExcludedMenteeIds(slot){return new Set((slot?.excludedMenteeIds||[]).map(String))}
+function eligibleStudentsForSlot(slot){if(!slot)return[];if(slot.mode==="pksk")return studentsInGroup(slot.group);const excluded=slotExcludedMenteeIds(slot);return studentsInGroup(slot.group).filter(s=>!excluded.has(String(s.id)))}
+function capacityForSlot(s){return s?.mode==="pksk"?1:eligibleStudentsForSlot(s).length}
+function activeApplicationsForSlot(slotId){return bookings.filter(b=>b.slotId===slotId&&["pending","approved","reassigned"].includes(b.status))}
+function pendingApplicationsForSlot(slotId){return bookings.filter(b=>b.slotId===slotId&&b.status==="pending")}
 function bookingStudentId(b){return b.assignedStudentId||b.requestedStudentId||""}
 function bookingStudentName(b){const s=studentById(bookingStudentId(b));return s?.name||b.assignedStudent||b.requestedStudentName||b.requestedStudent||"-"}
 function availableStudents(slot,excludeBookingId=""){
@@ -401,7 +436,7 @@ function availableStudents(slot,excludeBookingId=""){
   const finals=approvedForSlot(slot.id).filter(b=>b.id!==excludeBookingId);
   const takenIds=new Set(finals.map(bookingStudentId).filter(Boolean));
   const takenNames=new Set(finals.map(bookingStudentName));
-  return studentsInGroup(slot.group).filter(s=>!takenIds.has(s.id)&&!takenNames.has(s.name))
+  return eligibleStudentsForSlot(slot).filter(s=>!takenIds.has(s.id)&&!takenNames.has(s.name))
 }
 
 // ---------- Schedule / booking ----------
@@ -414,17 +449,33 @@ function renderSlots(){
   const slots=SCHEDULE.filter(s=>s.date===selectedDate),first=slots[0];if(!first)return;
   $("selectedDayTitle").textContent=`${first.day}, ${fmtDate(selectedDate)}`;$("selectedDayHint").textContent=`${slots.length} pilihan kelas`;
   $("slotGrid").innerHTML=slots.map(s=>{
-    const avail=availableStudents(s),full=!avail.length,capacity=s.mode==="pksk"?1:studentsInGroup(s.group).length,approved=Math.min(capacity,approvedForSlot(s.id).length),pending=bookings.filter(b=>b.slotId===s.id&&b.status==="pending").length;
-    return `<article class="slot ${full?"full":"available"} ${s.mode==="pksk"?"pksk":""}"><div class="slot-head"><div><div class="time">${esc(s.time)}</div><div class="subject">${esc(s.subject)}</div><div class="group">${esc(s.group)}${s.mode==="pksk"?" • 2 mentee, 1 mentor tambahan":""}</div></div><span class="badge ${full?"full":"ok"}">${full?"PENUH":"TERSEDIA"}</span></div>${s.topic?`<div class="topic"><b>Topik:</b> ${esc(s.topic)}</div>`:""}<div class="slot-footer"><small>${s.mode==="pksk"?(full?"1/1 mentor tambahan diluluskan":"1 mentor tambahan diperlukan"):`${approved}/${capacity} mentee telah diisi`}${pending?` • ${pending} menunggu`:""}</small><button class="primary" ${full?"disabled":""} onclick="openBooking('${s.id}')">${full?"Slot Penuh":"Tempah"}</button></div></article>`
+    const ended=slotHasEnded(s);
+    const avail=availableStudents(s),capacity=capacityForSlot(s),approved=Math.min(capacity,approvedForSlot(s.id).length),pending=pendingApplicationsForSlot(s.id).length,active=activeApplicationsForSlot(s.id).length;
+    const full=!avail.length||capacity===0;
+    const queueFull=!ended&&!full&&active>=capacity;
+    const canApply=!ended&&!full&&!queueFull;
+    const statusText=ended?"SELESAI":full?"PENUH":queueFull?"HAD PERMOHONAN":"TERSEDIA";
+    const statusClass=ended?"ended":full?"full":queueFull?"pending":"ok";
+    const queueText=s.mode==="pksk"
+      ? `${approved}/1 mentor tambahan diluluskan${pending?` • ${pending}/1 menunggu`:""}`
+      : `${approved}/${capacity} mentee telah diisi • ${pending}/${capacity} permohonan menunggu`;
+    const end=slotEndDateTime(s);
+    const footerText=ended
+      ? `Sesi telah tamat${end?` pada ${end.toLocaleTimeString("ms-MY",{hour:"numeric",minute:"2-digit"})}`:""}`
+      : s.mode==="pksk"
+        ? (full?"Mentor tambahan telah diisi":"1 mentor tambahan diperlukan")
+        : `${avail.length} mentee masih tersedia untuk dipilih`;
+    return `<article class="slot ${ended?"ended":full?"full":"available"} ${s.mode==="pksk"?"pksk":""}"><div class="slot-head"><div><div class="time">${esc(s.time)}</div><div class="subject">${esc(s.subject)}</div><div class="group">${esc(s.group)}${s.mode==="pksk"?" • 2 mentee, 1 mentor tambahan":""}</div></div><span class="badge ${statusClass}">${statusText}</span></div>${s.topic?`<div class="topic"><b>Topik:</b> ${esc(s.topic)}</div>`:""}<div class="queue-status"><span class="queue-chip ${ended||queueFull?"closed":"open"}">${esc(queueText)}</span></div><div class="slot-footer"><small>${esc(footerText)}</small><button class="primary" ${canApply?"":"disabled"} onclick="openBooking('${s.id}')">${ended?"Sesi Selesai":full?"Slot Penuh":queueFull?"Had Permohonan":"Tempah"}</button></div></article>`
   }).join("")
 }
 function openBooking(id){
   if(!currentEmail||adminMode){alert("Sila log masuk sebagai Mentor.");return}
-  const s=slotById(id),avail=availableStudents(s);if(!avail.length){alert("Slot ini telah penuh.");return}
+  const s=slotById(id);if(slotHasEnded(s)){alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");renderSlots();return}
+  const avail=availableStudents(s),capacity=capacityForSlot(s),active=activeApplicationsForSlot(s.id).length;if(!avail.length){alert("Slot ini telah penuh.");return}if(active>=capacity){alert("Had permohonan untuk slot ini telah dicapai. Jika ada permohonan ditolak atau mentor tarik diri, ruang akan dibuka semula.");return}
   $("slotId").value=s.id;
   $("mentorEmail").value=currentEmail;
   $("mentorMatric").value=currentMatric;
-  $("mentorName").value=profileByEmail(currentEmail)?.fullName||"";
+  $("mentorName").value=currentMentorProfile()?.fullName||"";
   $("mentorName").focus();
   $("bookingSummary").innerHTML=`<b>${s.day}, ${fmtDate(s.date)}</b><br>${esc(s.time)}<br><b>${esc(s.subject)}</b> • ${esc(s.group)}${s.topic?`<br>Topik: ${esc(s.topic)}`:""}`;
   if(s.mode==="pksk"){$("studentSelect").innerHTML=`<option value="pksk-pair">Ariana + Fathemah (kelas bersama)</option>`;$("studentSelect").disabled=true;$("studentHelp").textContent="PKSK dikendalikan oleh Felo Yamin. Tempahan ini untuk 1 mentor tambahan sahaja."}
@@ -433,6 +484,7 @@ function openBooking(id){
 }
 function submitBooking(){
   const sid=$("slotId").value,s=slotById(sid),name=$("mentorName").value.trim(),studentId=$("studentSelect").value,consent=document.querySelector('input[name="reassignConsent"]:checked')?.value||"no";
+  if(slotHasEnded(s)){alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");closeModal("bookingModal");renderSlots();return}
   if(!name){alert("Sila tulis NAMA PENUH mentor sebelum menghantar tempahan.");$("mentorName").focus();return}
   if(name.length<3){alert("Nama penuh mentor terlalu pendek. Sila semak semula.");$("mentorName").focus();return}
   if(!currentMatric){alert("Nombor matrik tidak ditemui. Sila log keluar dan log masuk semula.");return}
@@ -469,10 +521,16 @@ function toggleBookingReview(id){
   activeReviewBookingId=activeReviewBookingId===id?null:id;renderAdminBookings();
   if(activeReviewBookingId)setTimeout(()=>document.getElementById(`admin-booking-${id}`)?.scrollIntoView({behavior:"smooth",block:"center"}),50)
 }
+function bookingWaitingAge(iso){
+  if(!iso)return"-";const ms=Math.max(0,Date.now()-new Date(iso).getTime()),mins=Math.floor(ms/60000);
+  if(mins<1)return"baru sahaja";if(mins<60)return`${mins} minit`;
+  const hrs=Math.floor(mins/60);if(hrs<24)return`${hrs} jam ${mins%60?`${mins%60} minit`:""}`.trim();
+  const days=Math.floor(hrs/24);return`${days} hari ${hrs%24?`${hrs%24} jam`:""}`.trim();
+}
 function renderAdminBookings(){
   if(!adminMode)return;
   const filter=$("statusFilter").value,q=$("adminSearch").value.trim().toLowerCase();
-  const list=bookings.filter(b=>(filter==="all"||b.status===filter)&&(!q||[b.mentorName,b.email,b.mentorMatric,b.requestedStudentName,b.requestedStudent,bookingStudentName(b),b.ticket].some(x=>String(x||"").toLowerCase().includes(q))));
+  const list=bookings.filter(b=>(filter==="all"||b.status===filter)&&(!q||[b.mentorName,b.email,b.mentorMatric,b.requestedStudentName,b.requestedStudent,bookingStudentName(b),b.ticket].some(x=>String(x||"").toLowerCase().includes(q)))).sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
   $("adminBookingList").innerHTML=list.length?list.map(b=>{
     const s=slotById(b.slotId),open=activeReviewBookingId===b.id,focus=notificationFocusBookingId===b.id;
     const canReassign=b.consent==="yes";
@@ -481,7 +539,8 @@ function renderAdminBookings(){
     else if(isFinalStatus(b))actions=`<button class="secondary" onclick="openReassign('${b.id}')" ${canReassign?"":'disabled title="Mentor tidak bersetuju untuk pertukaran mentee"'}>Tukar Mentee</button><button class="danger" onclick="revertBooking('${b.id}')">Buka Semula</button><button class="danger" onclick="adminWithdrawBooking('${b.id}')">Tarik Diri Bagi Pihak Mentor</button>`;
     else if(["rejected","reverted"].includes(b.status))actions=`<button class="secondary" onclick="restorePending('${b.id}')">Kembalikan ke Menunggu</button>`;
     else if(b.status==="cancelled")actions=`<span class="meta">Slot telah dibuka semula untuk mentor lain.</span>`;
-    return `<div id="admin-booking-${b.id}" class="card admin-booking-card ${open?"review-open":""} ${focus?"notification-focus":""}"><div class="card-top"><div><h4>${esc(b.mentorName)} • <span class="ticket">${esc(b.ticket)}</span></h4><div class="meta">${esc(b.email)} • Matrik: <b>${esc(b.mentorMatric||"-")}</b><br>${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.subject)} • ${esc(s.group)}`:""}</div></div>${badge(b.status)}</div><div class="actions review-entry-actions"><button class="primary" type="button" onclick="toggleBookingReview('${b.id}')">${open?"Tutup Semakan":"Semak"}</button></div>${open?`<div class="booking-review-panel"><div class="kv"><b>Mentee diminta</b><span>${esc(b.requestedStudentName||b.requestedStudent||"-")}</span><b>Mentee ditugaskan</b><span>${esc(bookingStudentName(b))}</span><b>Benar pengaturan lain</b><span>${canReassign?"Ya":"Tidak"}</span><b>Catatan mentor</b><span>${esc(b.mentorNote||"-")}</span><b>Catatan Pentadbir</b><span>${esc(b.adminNote||"-")}</span>${b.status==="cancelled"?`<b>Tarik diri / batal oleh</b><span>${b.withdrawnBy==="admin"?"Pentadbir":"Mentor"}</span><b>Sebab</b><span>${esc(b.withdrawalReason||"Tidak dinyatakan")}</span><b>Masa</b><span>${b.withdrawnAt?fmtDateTime(b.withdrawnAt):"-"}</span>`:""}</div>${!canReassign&&b.status==="pending"?'<div class="notice warn compact-notice">Mentor tidak bersetuju untuk ditukarkan kepada mentee lain. Pentadbir hanya boleh meluluskan mentee asal atau menolak permohonan.</div>':""}<div class="actions">${actions}<button class="ghost" onclick="adminEditBooking('${b.id}')">Sunting Rekod</button><button class="danger" onclick="deleteBookingRecord('${b.id}')">Padam Rekod</button></div></div>`:""}</div>`
+    const requestedUnavailable=!!(s&&b.requestedStudentId&&b.requestedStudentId!=="pksk-pair"&&slotExcludedMenteeIds(s).has(String(b.requestedStudentId)));
+    return `<div id="admin-booking-${b.id}" class="card admin-booking-card ${open?"review-open":""} ${focus?"notification-focus":""}"><div class="card-top"><div><h4>${esc(b.mentorName)} • <span class="ticket">${esc(b.ticket)}</span></h4><div class="meta">${esc(b.email)} • Matrik: <b>${esc(b.mentorMatric||"-")}</b><br>${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.subject)} • ${esc(s.group)}`:""}</div>${b.createdAt?`<div class="booking-age">Dihantar: ${fmtDateTime(b.createdAt)}${b.status==="pending"?` • Menunggu ${bookingWaitingAge(b.createdAt)}`:""}</div>`:""}</div>${badge(b.status)}</div>${requestedUnavailable?'<div class="slot-unavailable-warning">Mentee yang diminta telah ditandakan tidak hadir / tidak tersedia untuk slot ini. Sila atur mentee lain atau tolak permohonan.</div>':""}<div class="actions review-entry-actions"><button class="primary" type="button" onclick="toggleBookingReview('${b.id}')">${open?"Tutup Semakan":"Semak"}</button></div>${open?`<div class="booking-review-panel"><div class="kv"><b>Mentee diminta</b><span>${esc(b.requestedStudentName||b.requestedStudent||"-")}</span><b>Mentee ditugaskan</b><span>${esc(bookingStudentName(b))}</span><b>Benar pengaturan lain</b><span>${canReassign?"Ya":"Tidak"}</span><b>Catatan mentor</b><span>${esc(b.mentorNote||"-")}</span><b>Catatan Pentadbir</b><span>${esc(b.adminNote||"-")}</span>${b.status==="cancelled"?`<b>Tarik diri / batal oleh</b><span>${b.withdrawnBy==="admin"?"Pentadbir":"Mentor"}</span><b>Sebab</b><span>${esc(b.withdrawalReason||"Tidak dinyatakan")}</span><b>Masa</b><span>${b.withdrawnAt?fmtDateTime(b.withdrawnAt):"-"}</span>`:""}</div>${!canReassign&&b.status==="pending"?'<div class="notice warn compact-notice">Mentor tidak bersetuju untuk ditukarkan kepada mentee lain. Pentadbir hanya boleh meluluskan mentee asal atau menolak permohonan.</div>':""}<div class="actions">${actions}<button class="ghost" onclick="adminEditBooking('${b.id}')">Sunting Rekod</button><button class="danger" onclick="deleteBookingRecord('${b.id}')">Padam Rekod</button></div></div>`:""}</div>`
   }).join(""):'<div class="empty">Tiada tempahan dalam kategori ini.</div>';
   updateStats();
   if(notificationFocusBookingId)setTimeout(()=>{notificationFocusBookingId=null},300)
@@ -528,7 +587,7 @@ function buildProfileCheckboxes(){
 function toggleOtherSubject(){const checked=[...document.querySelectorAll('input[name="mentorSubject"]:checked')].some(x=>x.value==="Lain-lain");$("otherSubjectWrap").classList.toggle("hidden",!checked)}
 function updateAboutWordCount(){const n=wordCount($("mentorProfileAbout").value);$("aboutWordCount").textContent=n;$("aboutWordCount").parentElement.classList.toggle("over",n>50)}
 function renderMentorProfile(){
-  const p=profileByEmail(currentEmail);$("mentorProfileName").value=p?.fullName||"";$("mentorProfileMatric").value=p?.matric||currentMatric;$("mentorProfileFaculty").value=p?.faculty||"";$("mentorProfileCourse").value=p?.course||"";$("mentorProfilePhone").value=p?.phone||"";$("mentorProfileStrength").value=p?.strength||"";$("mentorProfileAbout").value=p?.about||"";$("otherSubjectText").value=p?.otherSubject||"";
+  const p=currentMentorProfile();$("mentorProfileName").value=p?.fullName||"";$("mentorProfileMatric").value=p?.matric||currentMatric;$("mentorProfileFaculty").value=p?.faculty||"";$("mentorProfileCourse").value=p?.course||"";$("mentorProfilePhone").value=p?.phone||"";$("mentorProfileStrength").value=p?.strength||"";$("mentorProfileAbout").value=p?.about||"";$("otherSubjectText").value=p?.otherSubject||"";
   if($("mentorProfilePublicConsent"))$("mentorProfilePublicConsent").checked=!!p?.publicConsent;
   document.querySelectorAll('input[name="mentorSubject"]').forEach(cb=>cb.checked=(p?.subjects||[]).includes(cb.value));document.querySelectorAll('input[name="mentorLevel"]').forEach(cb=>cb.checked=(p?.levels||[]).includes(cb.value));toggleOtherSubject();updateAboutWordCount();
   const img=$("mentorProfilePhotoPreview");img.removeAttribute("src");img.dataset.loaded="0";if(p?.photoKey)img.dataset.fileKey=p.photoKey;else delete img.dataset.fileKey;hydrateStoredImages($("mentorProfile"))
@@ -538,7 +597,7 @@ async function saveMentorProfile(){
   const fullName=$("mentorProfileName").value.trim(),matric=$("mentorProfileMatric").value.trim().toUpperCase(),faculty=$("mentorProfileFaculty").value.trim(),course=$("mentorProfileCourse").value.trim(),about=$("mentorProfileAbout").value.trim();
   const subjects=[...document.querySelectorAll('input[name="mentorSubject"]:checked')].map(x=>x.value),levels=[...document.querySelectorAll('input[name="mentorLevel"]:checked')].map(x=>x.value);
   if(!fullName||!matric||!faculty||!course||!about){alert("Lengkapkan semua ruangan wajib.");return}if(wordCount(about)>50){alert("Penerangan diri mestilah maksimum 50 patah perkataan.");return}if(!subjects.length||!levels.length){alert("Pilih sekurang-kurangnya satu subjek dan satu tahap yang yakin untuk diajar.");return}
-  let p=profileByEmail(currentEmail);if(!p){p={id:uid(),email:currentEmail,photoKey:""};mentorProfiles.push(p)}
+  let p=currentMentorProfile();if(!p){p={id:uid(),email:currentEmail,matric:matric,photoKey:""};mentorProfiles.push(p)}
   const photo=$("mentorProfilePhoto").files?.[0];if(photo){const key=`mentor-photo-${uid()}`;await idbPut(key,photo);p.photoKey=key}
   Object.assign(p,{fullName,matric,faculty,course,phone:$("mentorProfilePhone").value.trim(),strength:$("mentorProfileStrength").value.trim(),about,subjects,otherSubject:$("otherSubjectText").value.trim(),levels,updatedAt:new Date().toISOString()});
   currentMatric=matric;storageSet(KEYS.sessionMatric,currentMatric);bookings.filter(b=>b.email?.toLowerCase()===currentEmail).forEach(b=>{b.mentorName=fullName;b.mentorMatric=matric});saveAll();refreshIdentity();renderMentorProfile();renderMentorDirectory();notify("*admin*",`Profil mentor dikemas kini: ${fullName} (${matric}).`,"info","mentor_profile_updated");alert("Profil Mentor berjaya disimpan.")
@@ -559,7 +618,7 @@ function mentorDirectoryEntries(){
       name:p?.fullName||fallback?.mentorName||"Mentor",
       matric:p?.matric||matric
     };
-  }).filter(x=>adminMode || x.p?.publicConsent);
+  });
 }
 function renderMentorDirectory(){
   const cards=mentorDirectoryEntries();
@@ -572,11 +631,11 @@ function renderMentorDirectory(){
         <div>
           <h4>${esc(x.name)}</h4>
           <div class="matric">${esc(x.matric)}</div>
-          <div class="meta">${esc(x.p?.faculty||"Fakulti belum dilengkapkan")}<br>${esc(x.p?.course||"")}</div>
+          <div class="meta">${esc((adminMode||x.p?.publicConsent)?(x.p?.faculty||"Fakulti belum dilengkapkan"):"Profil awam belum dikongsi")}<br>${esc((adminMode||x.p?.publicConsent)?(x.p?.course||""):"")}</div>
         </div>
       </div>
-      ${x.p?.about?`<p>${esc(x.p.about)}</p>`:""}
-      <div class="tag-list">${(x.p?.subjects||[]).slice(0,6).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</div>
+      ${(adminMode||x.p?.publicConsent)&&x.p?.about?`<p>${esc(x.p.about)}</p>`:""}
+      <div class="tag-list">${(adminMode||x.p?.publicConsent)?(x.p?.subjects||[]).slice(0,6).map(t=>`<span class="tag">${esc(t)}</span>`).join(""):""}</div>
       <div class="service-count">${x.serviceRows.length} sesi / tugasan mentor direkodkan</div>
       <div class="mentor-card-hint">Tekan untuk lihat profil dan rekod khidmat</div>
     </article>`).join(""):'<div class="empty">Belum ada mentor yang mempunyai rekod khidmat untuk dipaparkan.</div>';
@@ -612,9 +671,10 @@ function openMentorDirectoryProfile(matric){
   const x=mentorDirectoryEntries().find(e=>String(e.matric||"").trim().toUpperCase()===key);
   if(!x)return;
   const p=x.p||{};
-  const img=p.photoKey?`<img class="profile-photo large" data-file-key="${esc(p.photoKey)}" alt="Gambar ${esc(x.name)}">`:`<div class="mentor-popup-photo-placeholder">Tiada gambar</div>`;
-  const subjects=(p.subjects||[]).length?(p.subjects||[]).map(s=>`<span class="tag">${esc(s)}</span>`).join(""):'<span class="muted">Belum dinyatakan</span>';
-  const levels=(p.levels||[]).length?(p.levels||[]).map(s=>`<span class="tag level-tag">${esc(s)}</span>`).join(""):'<span class="muted">Belum dinyatakan</span>';
+  const canShowPublicProfile=adminMode || !!p.publicConsent;
+  const img=canShowPublicProfile && p.photoKey?`<img class="profile-photo large" data-file-key="${esc(p.photoKey)}" alt="Gambar ${esc(x.name)}">`:`<div class="mentor-popup-photo-placeholder">${canShowPublicProfile?"Tiada gambar":"Profil belum dikongsi"}</div>`;
+  const subjects=canShowPublicProfile && (p.subjects||[]).length?(p.subjects||[]).map(s=>`<span class="tag">${esc(s)}</span>`).join(""):'<span class="muted">'+(canShowPublicProfile?'Belum dinyatakan':'Belum diberi kebenaran untuk dipaparkan')+'</span>';
+  const levels=canShowPublicProfile && (p.levels||[]).length?(p.levels||[]).map(s=>`<span class="tag level-tag">${esc(s)}</span>`).join(""):'<span class="muted">'+(canShowPublicProfile?'Belum dinyatakan':'Belum diberi kebenaran untuk dipaparkan')+'</span>';
 
   const publicRows=mentorServiceRowsForMatric(x.matric);
   const allRows=adminMode?mentorServiceRowsForMatric(x.matric,{allStatuses:true}):publicRows;
@@ -656,12 +716,12 @@ function openMentorDirectoryProfile(matric){
       <div class="mentor-popup-details">
         <div class="mentor-popup-kv">
           <b>Nombor Matrik</b><span>${esc(x.matric)}</span>
-          <b>Fakulti</b><span>${esc(p.faculty||"Belum dilengkapkan")}</span>
-          <b>Program / Jurusan</b><span>${esc(p.course||"Belum dilengkapkan")}</span>
-          <b>Kekuatan Mengajar</b><span>${esc(p.strength||"Belum dinyatakan")}</span>
+          <b>Fakulti</b><span>${esc(canShowPublicProfile?(p.faculty||"Belum dilengkapkan"):"Tidak dipaparkan")}</span>
+          <b>Program / Jurusan</b><span>${esc(canShowPublicProfile?(p.course||"Belum dilengkapkan"):"Tidak dipaparkan")}</span>
+          <b>Kekuatan Mengajar</b><span>${esc(canShowPublicProfile?(p.strength||"Belum dinyatakan"):"Tidak dipaparkan")}</span>
         </div>
         <h4>Tentang Mentor</h4>
-        <p>${esc(p.about||"Belum dilengkapkan")}</p>
+        <p>${esc(canShowPublicProfile?(p.about||"Belum dilengkapkan"):"Mentor ini belum memberi kebenaran untuk memaparkan maklumat profil awam.")}</p>
         <h4>Subjek yang Boleh Diajar</h4>
         <div class="tag-list">${subjects}</div>
         <h4>Tahap yang Yakin untuk Diajar</h4>
@@ -868,15 +928,25 @@ let scheduleEditId = null;
 function scheduleDayName(date){if(!date)return "";const d=new Date(date+"T00:00:00");const raw=d.toLocaleDateString("ms-MY",{weekday:"long"});return raw.charAt(0).toUpperCase()+raw.slice(1)}
 function fillScheduleGroupOptions(){const el=$("scheduleGroup");if(!el)return;el.innerHTML=GROUP_ORDER.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join("")}
 function scheduleSort(a,b){return String(a.date||"").localeCompare(String(b.date||""))||String(a.time||"").localeCompare(String(b.time||""))||String(a.group||"").localeCompare(String(b.group||""))}
-function renderAdminSchedule(){if(!adminMode||!$("adminScheduleList"))return;const list=[...SCHEDULE].sort(scheduleSort);$("adminScheduleList").innerHTML=list.length?list.map(s=>`<div class="card schedule-admin-card"><div class="card-top"><div><h4>${esc(s.subject)}</h4><div class="meta"><b>${esc(s.day)}, ${fmtDate(s.date)}</b> • ${esc(s.time)}<br>${esc(s.group)} • ${s.mode==="pksk"?"PKSK":"One-to-One"}${s.topic?` • Topik: ${esc(s.topic)}`:""}</div></div><span class="badge info">${esc(s.mode==="pksk"?"PKSK":"INDIVIDU")}</span></div><div class="actions"><button class="secondary" type="button" onclick="editScheduleItem('${s.id}')">Edit</button><button class="danger" type="button" onclick="deleteScheduleItem('${s.id}')">Padam</button></div></div>`).join(""):'<div class="empty">Belum ada jadual.</div>'}
-function editScheduleItem(id){if(!adminMode)return;const s=slotById(id);if(!s)return;scheduleEditId=id;$("scheduleEditId").value=id;$("scheduleDate").value=s.date||"";$("scheduleTime").value=s.time||"";$("scheduleSubject").value=s.subject||"";$("scheduleGroup").value=s.group||GROUP_ORDER[0];$("scheduleMode").value=s.mode||"individual";$("scheduleTopic").value=s.topic||"";$("scheduleEditBanner").classList.remove("hidden");$("scheduleEditBanner").innerHTML=`Anda sedang mengedit <b>${esc(s.subject)}</b> pada ${esc(s.day)}, ${fmtDate(s.date)}.`;$("cancelScheduleEditBtn").classList.remove("hidden");switchAdminPane("adminSchedule")}
-function cancelScheduleEdit(){scheduleEditId=null;if($("scheduleEditId"))$("scheduleEditId").value="";["scheduleDate","scheduleTime","scheduleSubject","scheduleTopic"].forEach(id=>{if($(id))$(id).value=""});if($("scheduleMode"))$("scheduleMode").value="individual";if($("scheduleGroup"))$("scheduleGroup").value=GROUP_ORDER[0];$("scheduleEditBanner")?.classList.add("hidden");$("cancelScheduleEditBtn")?.classList.add("hidden")}
+function renderAdminSchedule(){if(!adminMode||!$("adminScheduleList"))return;const list=[...SCHEDULE].sort(scheduleSort);$("adminScheduleList").innerHTML=list.length?list.map(s=>{const total=studentsInGroup(s.group).length,eligible=s.mode==="pksk"?1:eligibleStudentsForSlot(s).length,ended=slotHasEnded(s);return `<div class="card schedule-admin-card ${ended?"schedule-ended":""}"><div class="card-top"><div><h4>${esc(s.subject)}</h4><div class="meta"><b>${esc(s.day)}, ${fmtDate(s.date)}</b> • ${esc(s.time)}<br>${esc(s.group)} • ${s.mode==="pksk"?"PKSK":"One-to-One"}${s.topic?` • Topik: ${esc(s.topic)}`:""}<br>${s.mode==="pksk"?"1 mentor tambahan":`Mentee tersedia untuk slot: ${eligible}/${total}`}</div></div><span class="badge ${ended?"ended":"info"}">${ended?"SELESAI":esc(s.mode==="pksk"?"PKSK":"INDIVIDU")}</span></div><div class="actions"><button class="secondary" type="button" onclick="editScheduleItem('${s.id}')">Edit</button><button class="danger" type="button" onclick="deleteScheduleItem('${s.id}')">Padam</button></div></div>`}).join(""):'<div class="empty">Belum ada jadual.</div>'}
+function updateScheduleMenteeAvailabilityCount(){
+  const count=$("scheduleMenteeAvailabilityCount");if(!count)return;
+  if($("scheduleMode")?.value==="pksk"){count.textContent="PKSK";return}
+  const total=document.querySelectorAll('input[name="scheduleAvailableMentee"]').length;
+  const selected=[...document.querySelectorAll('input[name="scheduleAvailableMentee"]')].filter(x=>x.checked).length;
+  count.textContent=`${selected}/${total} tersedia`;
+}
+function scheduleExcludedIdsFromForm(){
+  if($("scheduleMode")?.value==="pksk")return[];
+  return [...document.querySelectorAll('input[name="scheduleAvailableMentee"]')].filter(x=>!x.checked).map(x=>x.value);
+}
+function editScheduleItem(id){if(!adminMode)return;const s=slotById(id);if(!s)return;scheduleEditId=id;$("scheduleEditId").value=id;$("scheduleDate").value=s.date||"";$("scheduleTime").value=s.time||"";$("scheduleSubject").value=s.subject||"";$("scheduleGroup").value=s.group||GROUP_ORDER[0];$("scheduleMode").value=s.mode||"individual";$("scheduleTopic").value=s.topic||"";$("scheduleEditBanner").classList.remove("hidden");$("scheduleEditBanner").innerHTML=`Anda sedang mengedit <b>${esc(s.subject)}</b> pada ${esc(s.day)}, ${fmtDate(s.date)}. Nyahpilih mentee yang tidak hadir untuk slot ini sahaja.`;$("cancelScheduleEditBtn").classList.remove("hidden");switchAdminPane("adminSchedule");renderScheduleMenteeAvailability()}
+function cancelScheduleEdit(){scheduleEditId=null;if($("scheduleEditId"))$("scheduleEditId").value="";["scheduleDate","scheduleTime","scheduleSubject","scheduleTopic"].forEach(id=>{if($(id))$(id).value=""});if($("scheduleMode"))$("scheduleMode").value="individual";if($("scheduleGroup"))$("scheduleGroup").value=GROUP_ORDER[0];$("scheduleEditBanner")?.classList.add("hidden");$("cancelScheduleEditBtn")?.classList.add("hidden");renderScheduleMenteeAvailability()}
 function uniqueScheduleId(date,subject,group){const slug=(subject+"-"+group).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,42)||"slot";let base=String(date||"").replaceAll("-","")+"-"+slug,id=base,n=2;while(SCHEDULE.some(s=>s.id===id)){id=base+"-"+n++}return id}
 function saveScheduleItem(){if(!adminMode)return;const date=$("scheduleDate").value,time=$("scheduleTime").value.trim(),subject=$("scheduleSubject").value.trim(),group=$("scheduleGroup").value,mode=$("scheduleMode").value,topic=$("scheduleTopic").value.trim();if(!date||!time||!subject||!group){alert("Lengkapkan Tarikh, Masa, Subjek/Aktiviti dan Tahun/Tingkatan.");return}const rec={date,day:scheduleDayName(date),time,subject,group,mode:mode==="pksk"?"pksk":"individual",topic};if(scheduleEditId){const idx=SCHEDULE.findIndex(s=>s.id===scheduleEditId);if(idx<0)return;SCHEDULE[idx]={...SCHEDULE[idx],...rec}}else{rec.id=uniqueScheduleId(date,subject,group);SCHEDULE.push(rec)}SCHEDULE.sort(scheduleSort);selectedDate=date;saveAll();cancelScheduleEdit();fillMaterialSlots();renderAll();renderAdminSchedule();notify("*",`Jadual kelas dikemas kini: ${rec.day}, ${fmtDate(rec.date)} • ${rec.subject} (${rec.group}).`,"info","schedule_updated");alert("Jadual berjaya disimpan dan dikemas kini pada paparan mentor.")}
 function deleteScheduleItem(id){if(!adminMode)return;const s=slotById(id);if(!s)return;const relatedBookings=bookings.filter(b=>b.slotId===id),relatedMaterials=materials.filter(m=>m.slotId===id);const extra=(relatedBookings.length||relatedMaterials.length)?`\n\nSlot ini mempunyai ${relatedBookings.length} tempahan dan ${relatedMaterials.length} rekod bahan. Jika diteruskan, rekod berkaitan turut dipadam.`:"";if(!confirm(`Padam slot ${s.subject} • ${s.group} pada ${fmtDate(s.date)}?${extra}`))return;const bookingIds=new Set(relatedBookings.map(b=>b.id));SCHEDULE=SCHEDULE.filter(x=>x.id!==id);bookings=bookings.filter(b=>b.slotId!==id);reports=reports.filter(r=>!bookingIds.has(r.bookingId));materials=materials.filter(m=>m.slotId!==id);if(!SCHEDULE.some(x=>x.date===selectedDate))selectedDate=SCHEDULE[0]?.date||"";saveAll();fillMaterialSlots();renderAll();renderAdminSchedule();alert("Slot jadual telah dipadam.")}
 
 // ---------- Admin dashboard ----------
-function capacityForSlot(s){return s.mode==="pksk"?1:studentsInGroup(s.group).length}
 function renderAdminDashboard(){
   if(!adminMode)return;
   const byDate=[...new Set(SCHEDULE.map(s=>s.date))].map(date=>{const slots=SCHEDULE.filter(s=>s.date===date),cap=slots.reduce((n,s)=>n+capacityForSlot(s),0),filled=slots.reduce((n,s)=>n+Math.min(capacityForSlot(s),approvedForSlot(s.id).length),0);return {date,day:slots[0].day,cap,filled,pct:cap?Math.round(filled/cap*100):0}});
@@ -961,7 +1031,7 @@ function mergeMentorProfileRows(rows){
 
 function mapPublicMentorProfile(r){return {id:r.id,email:"",fullName:r.full_name||"",matric:r.matric_no||"",faculty:r.faculty||"",course:r.course||"",phone:"",strength:r.teaching_strength||"",about:r.about||"",photoKey:r.photo_path?sbFileKey("mentor-photos",r.photo_path):"",subjects:r.subjects||[],levels:r.levels||[],otherSubject:"",publicConsent:true,updatedAt:r.updated_at||""}}
 function mapMentee(r){return {id:r.id,name:r.full_name||r.short_name||"",shortName:r.short_name||"",group:r.group_name,summary:r.description||"",photoKey:r.photo_path?sbFileKey("mentee-photos",r.photo_path):""}}
-function mapSlot(r){return {id:r.id,date:r.class_date,day:scheduleDayName(r.class_date),time:r.time_label,subject:r.subject,group:r.group_name,mode:r.mode||"individual",topic:r.topic||""}}
+function mapSlot(r){return {id:r.id,date:r.class_date,day:scheduleDayName(r.class_date),time:r.time_label,subject:r.subject,group:r.group_name,mode:r.mode||"individual",topic:r.topic||"",excludedMenteeIds:r.excluded_mentee_ids||[]}}
 function mapBooking(r){const s=slotById(r.slot_id);return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:r.mentor_email||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:r.allow_reassignment?"yes":"no",mentorNote:r.mentor_note||"",adminNote:r.admin_note||"",withdrawalReason:r.withdrawal_reason||"",withdrawnBy:r.withdrawn_by||"",withdrawnAt:r.withdrawn_at||"",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at}}
 function mapMentorServiceRecord(r){
   return {
@@ -1133,7 +1203,7 @@ async function adminLogin(){
 async function logout(){try{await supabaseClient?.auth.signOut()}catch{}currentUserId="";currentEmail="";currentMatric="";currentRole="";adminMode=false;storageRemove(KEYS.sessionEmail);storageRemove(KEYS.sessionMatric);storageRemove(KEYS.sessionRole);toggleSidebar(false);$("loginOverlay").classList.remove("hidden");document.querySelectorAll(".admin-only").forEach(el=>el.classList.add("hidden"));document.querySelectorAll(".mentor-only").forEach(el=>el.classList.remove("hidden"));$("adminNavBtn")?.classList.add("hidden");$("adminBookingsQuickNav")?.classList.add("hidden");$("currentUserLabel").textContent="-";$("sidebarUserLabel").textContent="-";$("heroUserPill").textContent="Belum log masuk";setLoginMode("mentor")}
 function refreshIdentity(){const d=adminMode?`Pentadbir • ${userDisplay()}`:userDisplay();$("currentUserLabel").textContent=d;$("sidebarUserLabel").textContent=d;$("heroUserPill").textContent=d;if(adminMode)$("adminIdentity").textContent=`${currentEmail} • ${currentMatric}`;$("backendStatus").textContent="Sistem Aktif";$("backendStatus").classList.add("online")}
 
-async function submitBooking(){const sid=$("slotId").value,s=slotById(sid),name=$("mentorName").value.trim(),studentId=$("studentSelect").value,consent=document.querySelector('input[name="reassignConsent"]:checked')?.value||"no";if(!name||name.length<3){alert("Sila tulis NAMA PENUH mentor.");return}if(!studentId){alert("Pilih mentee.");return}if(!currentUserId){alert("Sesi login tidak ditemui. Sila log masuk semula.");return}const avail=availableStudents(s);if(!avail.some(x=>x.id===studentId)){alert("Mentee / slot ini tidak lagi tersedia.");await loadSupabaseState();return}const st=studentId==="pksk-pair"?{id:null,name:"Ariana + Fathemah"}:studentById(studentId);const ticket=makeTicket();const {data,error}=await supabaseClient.from("bookings").insert({booking_no:ticket,slot_id:sid,mentor_id:currentUserId,mentor_name:name,mentor_matric:currentMatric,mentor_email:currentEmail,requested_mentee_id:st.id,allow_reassignment:consent==="yes",mentor_note:$("bookingNote").value.trim(),status:"pending"}).select().single();if(error){alert("Tempahan tidak berjaya: "+error.message);return}closeModal("bookingModal");await pushNotification({audience:"admin",message:`Tempahan baharu ${ticket}: ${name} (${currentMatric}) memohon ${st.name} untuk ${s.subject} ${s.group}.`,linkType:"booking",linkId:data.id});await loadSupabaseState();speakThanks();alert("Tempahan dihantar kepada Pentadbir untuk kelulusan.")}
+async function submitBooking(){const sid=$("slotId").value,s=slotById(sid),name=$("mentorName").value.trim(),studentId=$("studentSelect").value,consent=document.querySelector('input[name="reassignConsent"]:checked')?.value||"no";if(slotHasEnded(s)){alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");closeModal("bookingModal");renderSlots();return}if(!name||name.length<3){alert("Sila tulis NAMA PENUH mentor.");return}if(!studentId){alert("Pilih mentee.");return}if(!currentUserId){alert("Sesi login tidak ditemui. Sila log masuk semula.");return}const capacity=capacityForSlot(s),active=activeApplicationsForSlot(sid).length;if(active>=capacity){alert("Had permohonan untuk slot ini telah dicapai. Sila tunggu sehingga Pentadbir menolak permohonan atau mentor lain menarik diri.");await loadSupabaseState();return}const avail=availableStudents(s);if(!avail.some(x=>x.id===studentId)){alert("Mentee / slot ini tidak lagi tersedia.");await loadSupabaseState();return}const st=studentId==="pksk-pair"?{id:null,name:"Ariana + Fathemah"}:studentById(studentId);const ticket=makeTicket();const {data,error}=await supabaseClient.from("bookings").insert({booking_no:ticket,slot_id:sid,mentor_id:currentUserId,mentor_name:name,mentor_matric:currentMatric,mentor_email:currentEmail,requested_mentee_id:st.id,allow_reassignment:consent==="yes",mentor_note:$("bookingNote").value.trim(),status:"pending"}).select().single();if(error){const msg=String(error.message||"");if(msg.includes("SLOT_ALREADY_ENDED"))alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");else if(msg.includes("SLOT_APPLICATION_LIMIT_REACHED"))alert("Had permohonan slot ini telah penuh. Ruang akan dibuka semula apabila ada permohonan ditolak atau ditarik diri.");else if(msg.includes("MENTEE_NOT_AVAILABLE_FOR_SLOT"))alert("Mentee ini telah ditandakan tidak hadir / tidak tersedia untuk slot ini. Sila pilih mentee lain.");else alert("Tempahan tidak berjaya: "+msg);await loadSupabaseState();return}closeModal("bookingModal");await pushNotification({audience:"admin",message:`Tempahan baharu ${ticket}: ${name} (${currentMatric}) memohon ${st.name} untuk ${s.subject} ${s.group}.`,linkType:"booking",linkId:data.id});await loadSupabaseState();speakThanks();alert("Tempahan dihantar kepada Pentadbir untuk kelulusan.")}
 async function approveBooking(id){const b=bookings.find(x=>x.id===id),s=slotById(b?.slotId);if(!b||!s)return;const req=b.requestedStudentId==="pksk-pair"?null:b.requestedStudentId;const {error}=await supabaseClient.from("bookings").update({assigned_mentee_id:req,status:"approved",admin_note:null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert("Tidak dapat meluluskan: "+error.message);return}await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} telah DILULUSKAN. Mentee: ${b.requestedStudentName||"Ariana + Fathemah"}.`,linkType:"booking",linkId:id});await loadSupabaseState()}
 async function confirmReassign(){const b=bookings.find(x=>x.id===activeReassignId),sid=$("reassignStudent").value,st=sid==="pksk-pair"?{id:null,name:"Ariana + Fathemah"}:studentById(sid);if(!b||!st)return;const {error}=await supabaseClient.from("bookings").update({assigned_mentee_id:st.id,status:"reassigned",admin_note:$("reassignNote").value.trim(),reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",b.id);if(error){alert("Pertukaran tidak berjaya: "+error.message);return}closeModal("reassignModal");await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} diluluskan dengan mentee: ${st.name}.`,linkType:"booking",linkId:b.id});await loadSupabaseState()}
 async function rejectBooking(id){const b=bookings.find(x=>x.id===id),n=prompt("Sebab tempahan tidak diluluskan:","");if(!b||n===null)return;const {error}=await supabaseClient.from("bookings").update({status:"rejected",admin_note:n,assigned_mentee_id:null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert(error.message);return}await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} tidak diluluskan.${n?` Catatan: ${n}`:""}`,linkType:"booking",linkId:id});await loadSupabaseState()}
@@ -1150,7 +1220,7 @@ const {error:syncError}=await supabaseClient.rpc("sync_my_mentor_profile",{p_ful
 if(syncError){console.warn("Profile sync:",syncError.message)}
 currentMatric=matric;storageSet(KEYS.sessionMatric,matric);await loadSupabaseState();speakThanks();alert("Profil Mentor berjaya disimpan.")}
 
-async function saveScheduleItem(){if(!adminMode)return;const date=$("scheduleDate").value,time=$("scheduleTime").value.trim(),subject=$("scheduleSubject").value.trim(),group=$("scheduleGroup").value,mode=$("scheduleMode").value,topic=$("scheduleTopic").value.trim();if(!date||!time||!subject||!group){alert("Lengkapkan semua ruangan wajib jadual.");return}const payload={class_date:date,time_label:time,subject,group_name:group,mode:mode==="pksk"?"pksk":"individual",topic:topic||null,active:true,created_by:currentUserId};let q=scheduleEditId?supabaseClient.from("schedule_slots").update(payload).eq("id",scheduleEditId):supabaseClient.from("schedule_slots").insert(payload);const {error}=await q;if(error){alert(error.message);return}selectedDate=date;cancelScheduleEdit();await loadSupabaseState();alert("Jadual berjaya disimpan.")}
+async function saveScheduleItem(){if(!adminMode)return;const date=$("scheduleDate").value,time=$("scheduleTime").value.trim(),subject=$("scheduleSubject").value.trim(),group=$("scheduleGroup").value,mode=$("scheduleMode").value,topic=$("scheduleTopic").value.trim();if(!date||!time||!subject||!group){alert("Lengkapkan semua ruangan wajib jadual.");return}const excludedIds=scheduleExcludedIdsFromForm();const payload={class_date:date,time_label:time,subject,group_name:group,mode:mode==="pksk"?"pksk":"individual",topic:topic||null,excluded_mentee_ids:excludedIds,active:true,created_by:currentUserId};let q=scheduleEditId?supabaseClient.from("schedule_slots").update(payload).eq("id",scheduleEditId):supabaseClient.from("schedule_slots").insert(payload);const {error}=await q;if(error){alert(error.message);return}selectedDate=date;cancelScheduleEdit();await loadSupabaseState();alert(`Jadual berjaya disimpan. ${mode==="pksk"?"Kuota PKSK dikekalkan.":`${studentsInGroup(group).length-excludedIds.length}/${studentsInGroup(group).length} mentee tersedia untuk slot ini.`}`)}
 async function deleteScheduleItem(id){const s=slotById(id);if(!adminMode||!s||!confirm(`Padam slot ${s.subject} • ${s.group}?`))return;const {error}=await supabaseClient.from("schedule_slots").delete().eq("id",id);if(error){alert("Slot tidak dapat dipadam jika mempunyai rekod berkaitan. "+error.message);return}await loadSupabaseState()}
 
 async function saveMaterialSet(){
@@ -1331,7 +1401,7 @@ async function init(){
     bindLoginControls();buildProfileCheckboxes();fillMaterialSlots();fillScheduleGroupOptions();fillMenteeGroupOptions();
     $("mentorProfilePhoto")?.addEventListener("change",()=>previewSelectedImage($("mentorProfilePhoto"),$("mentorProfilePhotoPreview")));
     $("menteeEditPhoto")?.addEventListener("change",()=>previewSelectedImage($("menteeEditPhoto"),$("menteeEditPhotoPreview")));
-    initialiseSupabaseWhenConfigured();setupWelcomeVoice();
+    initialiseSupabaseWhenConfigured();setupWelcomeVoice();setupSlotTimeWatcher();
     const session=await sbSession();
     if(session?.user){
       currentUserId=session.user.id;
