@@ -929,6 +929,55 @@ function scheduleDayName(date){if(!date)return "";const d=new Date(date+"T00:00:
 function fillScheduleGroupOptions(){const el=$("scheduleGroup");if(!el)return;el.innerHTML=GROUP_ORDER.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join("")}
 function scheduleSort(a,b){return String(a.date||"").localeCompare(String(b.date||""))||String(a.time||"").localeCompare(String(b.time||""))||String(a.group||"").localeCompare(String(b.group||""))}
 function renderAdminSchedule(){if(!adminMode||!$("adminScheduleList"))return;const list=[...SCHEDULE].sort(scheduleSort);$("adminScheduleList").innerHTML=list.length?list.map(s=>{const total=studentsInGroup(s.group).length,eligible=s.mode==="pksk"?1:eligibleStudentsForSlot(s).length,ended=slotHasEnded(s);return `<div class="card schedule-admin-card ${ended?"schedule-ended":""}"><div class="card-top"><div><h4>${esc(s.subject)}</h4><div class="meta"><b>${esc(s.day)}, ${fmtDate(s.date)}</b> • ${esc(s.time)}<br>${esc(s.group)} • ${s.mode==="pksk"?"PKSK":"One-to-One"}${s.topic?` • Topik: ${esc(s.topic)}`:""}<br>${s.mode==="pksk"?"1 mentor tambahan":`Mentee tersedia untuk slot: ${eligible}/${total}`}</div></div><span class="badge ${ended?"ended":"info"}">${ended?"SELESAI":esc(s.mode==="pksk"?"PKSK":"INDIVIDU")}</span></div><div class="actions"><button class="secondary" type="button" onclick="editScheduleItem('${s.id}')">Edit</button><button class="danger" type="button" onclick="deleteScheduleItem('${s.id}')">Padam</button></div></div>`}).join(""):'<div class="empty">Belum ada jadual.</div>'}
+function renderScheduleMenteeAvailability(){
+  const wrap=$("scheduleMenteeAvailabilityWrap");
+  const box=$("scheduleMenteeAvailability");
+  const count=$("scheduleMenteeAvailabilityCount");
+  if(!wrap||!box||!count)return;
+
+  const mode=$("scheduleMode")?.value||"individual";
+  const group=$("scheduleGroup")?.value||"";
+
+  if(mode==="pksk"){
+    box.innerHTML='<div class="notice info">Slot PKSK menggunakan Ariana + Fathemah bersama-sama. Tetapan mentee individu tidak digunakan untuk slot ini.</div>';
+    count.textContent="PKSK";
+    return;
+  }
+
+  const list=studentsInGroup(group);
+  const edited=scheduleEditId?slotById(scheduleEditId):null;
+  const excluded=(edited&&edited.group===group)
+    ? slotExcludedMenteeIds(edited)
+    : new Set();
+
+  if(!list.length){
+    box.innerHTML='<div class="empty compact">Tiada mentee aktif dalam Tahun / Tingkatan ini.</div>';
+    count.textContent="0/0 tersedia";
+    return;
+  }
+
+  box.innerHTML=list.map(st=>{
+    const checked=!excluded.has(String(st.id));
+    const activeBookings=bookings.filter(b=>
+      b.slotId===scheduleEditId &&
+      ["pending","approved","reassigned"].includes(b.status) &&
+      [b.requestedStudentId,b.assignedStudentId].includes(st.id)
+    );
+    const bookingHint=activeBookings.length
+      ? `<span class="field-help">Ada ${activeBookings.length} tempahan aktif untuk mentee ini.</span>`
+      : "";
+    return `<label class="choice schedule-mentee-choice">
+      <span>
+        <input type="checkbox" name="scheduleAvailableMentee" value="${esc(st.id)}" ${checked?"checked":""} onchange="updateScheduleMenteeAvailabilityCount()" />
+        <b>${esc(st.name)}</b>
+        ${bookingHint}
+      </span>
+    </label>`;
+  }).join("");
+
+  updateScheduleMenteeAvailabilityCount();
+}
+
 function updateScheduleMenteeAvailabilityCount(){
   const count=$("scheduleMenteeAvailabilityCount");if(!count)return;
   if($("scheduleMode")?.value==="pksk"){count.textContent="PKSK";return}

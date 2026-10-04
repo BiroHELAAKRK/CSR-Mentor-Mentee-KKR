@@ -193,3 +193,9 @@ button{cursor:pointer}
 .slot.ended .subject,.slot.ended .group,.slot.ended .time{opacity:.78}
 .slot.ended .primary:disabled{background:#c7cdd3;color:#fff}
 .schedule-admin-card.schedule-ended{background:#fafbfc}
+
+/* v12.7.1 mentee availability checkbox render fix */
+.schedule-mentee-choice{display:block}
+.schedule-mentee-choice>span{display:flex;align-items:flex-start;gap:9px;flex-wrap:wrap}
+.schedule-mentee-choice input{width:auto;margin-top:2px}
+.schedule-mentee-choice .field-help{flex-basis:100%;margin-left:25px}
