@@ -439,6 +439,7 @@ function logout(){
 function toggleSidebar(open){$("sidebar").classList.toggle("open",!!open);$("sidebarBackdrop").classList.toggle("open",!!open)}
 function closeModal(id){$(id).classList.remove("open")}
 function switchTab(id){
+  if(id==="mentorRecognition"&&!adminMode){alert("Paparan Pengecaman Mentor hanya untuk Pentadbir.");return}
   if(adminMode&&id==="mybooking"){openAdminPane("bookings");return}
   document.querySelectorAll(".sidebar-nav button[data-tab]").forEach(b=>b.classList.toggle("active",b.dataset.tab===id));
   document.querySelectorAll(".section").forEach(s=>s.classList.toggle("active",s.id===id));toggleSidebar(false);$("notificationPopover")?.classList.remove("open");
@@ -447,6 +448,7 @@ function switchTab(id){
   if(id==="reports")renderMentorReports();
   if(id==="approvedReports")renderApprovedReports();
   if(id==="classArchive")renderClassArchive();
+  if(id==="mentorRecognition")renderAdminMentorLive();
   if(id==="logistics")renderLogisticsPage();
   if(id==="recycleBin")renderRecycleBin();
   if(id==="mentees")renderMentees();
@@ -591,7 +593,7 @@ function openBooking(id){
   $("bookingNote").value="";document.querySelector('input[name="reassignConsent"][value="yes"]').checked=true;$("bookingModal").classList.add("open")
 }
 function submitBooking(){
-  const sid=$("slotId").value,s=slotById(sid),name=$("mentorName").value.trim(),studentId=$("studentSelect").value,consent=document.querySelector('input[name="reassignConsent"]:checked')?.value||"no";
+  const sid=$("slotId").value,s=slotById(sid),name=$("mentorName").value.trim().toUpperCase(),studentId=$("studentSelect").value,consent=document.querySelector('input[name="reassignConsent"]:checked')?.value||"no";
   if(slotHasEnded(s)){alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");closeModal("bookingModal");renderSlots();return}
   if(!name){alert("Sila tulis NAMA PENUH mentor sebelum menghantar tempahan.");$("mentorName").focus();return}
   if(name.length<3){alert("Nama penuh mentor terlalu pendek. Sila semak semula.");$("mentorName").focus();return}
@@ -679,7 +681,7 @@ function adminEditBooking(id){
   const email=prompt("E-mel mentor:",b.email||"");if(email===null)return;
   const matric=prompt("Nombor matrik:",b.mentorMatric||"");if(matric===null)return;
   const note=prompt("Catatan mentor / rekod:",b.mentorNote||"");if(note===null)return;
-  b.mentorName=name.trim()||b.mentorName;b.email=email.trim().toLowerCase()||b.email;b.mentorMatric=matric.trim()||b.mentorMatric;b.mentorNote=note.trim();b.updatedAt=new Date().toISOString();
+  b.mentorName=name.trim().toUpperCase()||b.mentorName;b.email=email.trim().toLowerCase()||b.email;b.mentorMatric=matric.trim()||b.mentorMatric;b.mentorNote=note.trim();b.updatedAt=new Date().toISOString();
   saveAll();notify(b.email,`Pentadbir telah mengemas kini butiran tempahan ${b.ticket}.`,"info","booking_admin_edit",{bookingId:b.id,ticket:b.ticket,kind:"booking"});renderAll();alert("Rekod tempahan berjaya disunting.")
 }
 function deleteBookingRecord(id){
@@ -702,7 +704,7 @@ function renderMentorProfile(){
 }
 async function saveMentorProfile(){
   if(!currentEmail){alert("Sila log masuk.");return}
-  const fullName=$("mentorProfileName").value.trim(),matric=$("mentorProfileMatric").value.trim().toUpperCase(),faculty=$("mentorProfileFaculty").value.trim(),course=$("mentorProfileCourse").value.trim(),about=$("mentorProfileAbout").value.trim();
+  const fullName=$("mentorProfileName").value.trim().toUpperCase(),matric=$("mentorProfileMatric").value.trim().toUpperCase(),faculty=$("mentorProfileFaculty").value.trim(),course=$("mentorProfileCourse").value.trim(),about=$("mentorProfileAbout").value.trim();
   const subjects=[...document.querySelectorAll('input[name="mentorSubject"]:checked')].map(x=>x.value),levels=[...document.querySelectorAll('input[name="mentorLevel"]:checked')].map(x=>x.value);
   if(!fullName||!matric||!faculty||!course||!about){alert("Lengkapkan semua ruangan wajib.");return}if(wordCount(about)>50){alert("Penerangan diri mestilah maksimum 50 patah perkataan.");return}if(!subjects.length||!levels.length){alert("Pilih sekurang-kurangnya satu subjek dan satu tahap yang yakin untuk diajar.");return}
   let p=currentMentorProfile();if(!p){p={id:uid(),email:currentEmail,matric:matric,photoKey:""};mentorProfiles.push(p)}
@@ -802,6 +804,7 @@ function openMentorDirectoryProfile(matric){
           <b>No. Telefon</b><span>${esc(p.phone||"Belum diisi")}</span>
           <b>Kebenaran Paparan</b><span>${p.publicConsent?"Ya":"Tidak"}</span>
         </div>
+        <div class="actions" style="margin-top:12px"><button class="secondary" type="button" onclick="adminEditMentorName('${esc(x.matric)}')">Edit Nama Mentor</button></div>
         <div class="mentor-admin-stats">
           <div><b>${total}</b><span>Jumlah Tempahan</span></div>
           <div><b>${approved}</b><span>Dilulus / Diatur Semula</span></div>
@@ -843,6 +846,22 @@ function openMentorDirectoryProfile(matric){
     </div>`;
   $("mentorDirectoryProfileModal").classList.add("open");
   hydrateStoredImages($("mentorDirectoryProfileModal"));
+}
+
+
+async function adminEditMentorName(matric){
+  if(!adminMode){alert("Akses Pentadbir diperlukan.");return}
+  const p=profileByMatric(matric);
+  const current=(p?.fullName||mentorDirectoryEntries().find(x=>String(x.matric||"").toUpperCase()===String(matric||"").toUpperCase())?.name||"").toUpperCase();
+  const input=prompt("Nama penuh mentor:",current);
+  if(input===null)return;
+  const newName=input.trim().toUpperCase();
+  if(newName.length<3){alert("Masukkan nama penuh mentor yang sah.");return}
+  const {error}=await supabaseClient.rpc("admin_update_mentor_name",{p_matric:String(matric||"").trim().toUpperCase(),p_full_name:newName});
+  if(error){alert("Nama mentor tidak dapat dikemas kini: "+error.message);return}
+  await loadSupabaseState();
+  openMentorDirectoryProfile(String(matric||"").trim().toUpperCase());
+  alert("Nama mentor berjaya dikemas kini pada profil, tempahan dan laporan berkaitan.");
 }
 
 // ---------- Mentee profiles ----------
@@ -1244,44 +1263,124 @@ function renderAdminMentorLive(){
 // ---------- Logistics & Transport ----------
 function logisticsMentorsForDate(date){
   const slotIds=new Set(SCHEDULE.filter(s=>s.date===date).map(s=>s.id));const map=new Map();
-  bookings.filter(b=>slotIds.has(b.slotId)&&["pending","approved","reassigned"].includes(b.status)).forEach(b=>{const k=String(b.mentorMatric||b.email||b.userId||"").toUpperCase();if(k&&!map.has(k))map.set(k,{name:b.mentorName||"Mentor",matric:b.mentorMatric||"",email:b.email||""})});
+  bookings.filter(b=>slotIds.has(b.slotId)&&["pending","approved","reassigned"].includes(b.status)).forEach(b=>{const k=String(b.mentorMatric||b.email||b.userId||"").toUpperCase();if(k&&!map.has(k))map.set(k,{name:(b.mentorName||"Mentor").toUpperCase(),matric:b.mentorMatric||"",email:b.email||""})});
   return [...map.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),"ms"))
 }
 function updateLogisticsParticipantCount(){const el=$("logisticsParticipantCount");if(!el)return;el.textContent=`${document.querySelectorAll('input[name="logisticsParticipant"]:checked').length} dipilih`}
 function renderLogisticsParticipants(){
   const date=$("logisticsDate")?.value||defaultBookingDate();const box=$("logisticsParticipantCheckboxes");if(!box)return;
-  if(!adminMode){const p=currentMentorProfile();if($("logisticsSelfName"))$("logisticsSelfName").textContent=p?.fullName||currentMatric||currentEmail||"Mentor semasa";return}
+  if(!adminMode){const p=currentMentorProfile();if($("logisticsSelfName"))$("logisticsSelfName").textContent=(p?.fullName||currentMatric||currentEmail||"Mentor semasa").toUpperCase();return}
   const mentors=logisticsMentorsForDate(date);box.innerHTML=mentors.length?mentors.map(m=>`<label class="choice logistics-participant"><input type="checkbox" name="logisticsParticipant" value="${esc(m.matric)}" data-name="${esc(m.name)}" onchange="updateLogisticsParticipantCount()" /><span><b>${esc(m.name)}</b><small>${esc(m.matric||"-")}</small></span></label>`).join(""):'<div class="empty compact">Belum ada mentor berdaftar untuk tarikh ini. Gunakan ruangan Individu Tambahan jika perlu.</div>';updateLogisticsParticipantCount()
 }
 function updateLogisticsVehicleFields(){const mode=$("logisticsMode")?.value||"own_car";const show=["own_car","carpool"].includes(mode);$("logisticsVehicleOwnerWrap")?.classList.toggle("hidden",!show);$("logisticsPlateWrap")?.classList.toggle("hidden",!show)}
 function renderLogisticsPage(){
-  const date=$("logisticsDate");if(!date)return;if(!date.value)date.value=defaultBookingDate()||malaysiaTodayISO();updateLogisticsVehicleFields();renderLogisticsParticipants();if(adminMode)renderLogisticsAdminResults()
+  const date=$("logisticsDate"),matDate=$("additionalMaterialDate");
+  const def=defaultBookingDate()||malaysiaTodayISO();
+  if(date&&!date.value)date.value=def;
+  if(matDate&&!matDate.value)matDate.value=def;
+  updateLogisticsVehicleFields();renderLogisticsParticipants();if(adminMode)renderLogisticsAdminResults()
+}
+async function submitAdditionalMaterialEntry(){
+  if(!supabaseClient||!currentUserId){alert("Sesi sistem tidak tersedia. Sila log masuk semula.");return}
+  const classDate=$("additionalMaterialDate").value,details=$("additionalMaterialDetails").value.trim();
+  if(!classDate||!details){alert("Pilih tarikh dan nyatakan bahan / logistik tambahan.");return}
+  const name=(currentMentorProfile()?.fullName||currentMatric||currentEmail).toUpperCase();
+  const payload={
+    entry_type:"materials",
+    class_date:classDate,
+    submitted_by:currentUserId,
+    submitter_email:currentEmail,
+    submitter_matric:currentMatric,
+    submitter_name:name,
+    transport_mode:"other",
+    car_owner:null,
+    plate_no:null,
+    participant_matrics:[currentMatric],
+    participant_names:[name],
+    additional_people:null,
+    extra_materials:details,
+    admin_note:null,
+    status:adminMode?"approved":"pending",
+    reviewed_by:adminMode?currentUserId:null,
+    reviewed_at:adminMode?new Date().toISOString():null
+  };
+  const {error}=await supabaseClient.from("logistics_entries").insert(payload);
+  if(error){alert("Bahan tambahan tidak dapat dihantar: "+error.message);return}
+  if(!adminMode)await pushNotification({audience:"admin",message:`Bahan tambahan baharu daripada ${name} (${currentMatric}) untuk ${fmtDate(classDate)}.`,linkType:"logistics",linkId:null});
+  $("additionalMaterialDetails").value="";
+  await loadSupabaseState();speakThanks();alert(adminMode?"Bahan tambahan berjaya direkodkan dan diluluskan.":"Bahan tambahan berjaya dihantar untuk kelulusan Pentadbir.")
 }
 async function submitLogisticsEntry(){
   if(!supabaseClient||!currentUserId){alert("Sesi sistem tidak tersedia. Sila log masuk semula.");return}
-  const classDate=$("logisticsDate").value,mode=$("logisticsMode").value,carOwner=$("logisticsCarOwner").value.trim(),plate=$("logisticsPlate").value.trim().toUpperCase(),additional=$("logisticsAdditionalPeople").value.trim(),extra=$("logisticsExtraMaterials").value.trim(),adminNote=adminMode?$("logisticsAdminNote").value.trim():"";
+  const classDate=$("logisticsDate").value,mode=$("logisticsMode").value,carOwner=$("logisticsCarOwner").value.trim(),plate=$("logisticsPlate").value.trim().toUpperCase(),additional=$("logisticsAdditionalPeople").value.trim(),adminNote=adminMode?$("logisticsAdminNote").value.trim():"";
   if(!classDate||!mode){alert("Pilih tarikh dan mod pengangkutan.");return}
   if(["own_car","carpool"].includes(mode)&&(!carOwner||!plate)){alert("Untuk kereta sendiri / car-pool, isi pemilik atau pemandu dan nombor plat.");return}
   let participantMatrics=[],participantNames=[];
-  if(adminMode){document.querySelectorAll('input[name="logisticsParticipant"]:checked').forEach(x=>{participantMatrics.push(x.value);participantNames.push(x.dataset.name||x.value)})}
-  else{const p=currentMentorProfile();participantMatrics=[currentMatric];participantNames=[p?.fullName||currentMatric||currentEmail]}
+  if(adminMode){document.querySelectorAll('input[name="logisticsParticipant"]:checked').forEach(x=>{participantMatrics.push(x.value);participantNames.push((x.dataset.name||x.value).toUpperCase())})}
+  else{const p=currentMentorProfile();participantMatrics=[currentMatric];participantNames=[(p?.fullName||currentMatric||currentEmail).toUpperCase()]}
   if(!participantNames.length&&!additional){alert("Pilih sekurang-kurangnya seorang peserta atau isi Individu Tambahan.");return}
-  const payload={class_date:classDate,submitted_by:currentUserId,submitter_email:currentEmail,submitter_matric:currentMatric,submitter_name:currentMentorProfile()?.fullName||currentMatric||currentEmail,transport_mode:mode,car_owner:["own_car","carpool"].includes(mode)?carOwner:null,plate_no:["own_car","carpool"].includes(mode)?plate:null,participant_matrics:participantMatrics,participant_names:participantNames,additional_people:additional||null,extra_materials:extra||null,admin_note:adminNote||null,status:adminMode?"approved":"pending",reviewed_by:adminMode?currentUserId:null,reviewed_at:adminMode?new Date().toISOString():null};
-  let data=null,error=null;if(adminMode){const res=await supabaseClient.from("logistics_entries").insert(payload).select().single();data=res.data;error=res.error}else{const res=await supabaseClient.from("logistics_entries").insert(payload);error=res.error}if(error){alert("Maklumat logistik tidak dapat dihantar: "+error.message);return}
-  if(!adminMode)await pushNotification({audience:"admin",message:`Maklumat logistik baharu daripada ${payload.submitter_name} (${currentMatric}) untuk ${fmtDate(classDate)}.`,linkType:"logistics",linkId:null});
-  $("logisticsAdditionalPeople").value="";$("logisticsExtraMaterials").value="";if(adminMode)$("logisticsAdminNote").value="";document.querySelectorAll('input[name="logisticsParticipant"]:checked').forEach(x=>x.checked=false);await loadSupabaseState();speakThanks();alert(adminMode?"Maklumat logistik berjaya direkodkan dan diluluskan.":"Maklumat logistik berjaya dihantar untuk kelulusan Pentadbir.")
+  const submitter=(currentMentorProfile()?.fullName||currentMatric||currentEmail).toUpperCase();
+  const payload={entry_type:"transport",class_date:classDate,submitted_by:currentUserId,submitter_email:currentEmail,submitter_matric:currentMatric,submitter_name:submitter,transport_mode:mode,car_owner:["own_car","carpool"].includes(mode)?carOwner:null,plate_no:["own_car","carpool"].includes(mode)?plate:null,participant_matrics:participantMatrics,participant_names:participantNames,additional_people:additional||null,extra_materials:null,admin_note:adminNote||null,status:adminMode?"approved":"pending",reviewed_by:adminMode?currentUserId:null,reviewed_at:adminMode?new Date().toISOString():null};
+  const {error}=await supabaseClient.from("logistics_entries").insert(payload);
+  if(error){alert("Maklumat pengangkutan tidak dapat dihantar: "+error.message);return}
+  if(!adminMode)await pushNotification({audience:"admin",message:`Maklumat pengangkutan baharu daripada ${submitter} (${currentMatric}) untuk ${fmtDate(classDate)}.`,linkType:"logistics",linkId:null});
+  $("logisticsAdditionalPeople").value="";if(adminMode)$("logisticsAdminNote").value="";document.querySelectorAll('input[name="logisticsParticipant"]:checked').forEach(x=>x.checked=false);await loadSupabaseState();speakThanks();alert(adminMode?"Maklumat pengangkutan berjaya direkodkan dan diluluskan.":"Maklumat pengangkutan berjaya dihantar untuk kelulusan Pentadbir.")
 }
 function logisticsApproved(){return logisticsEntries.filter(x=>x.status==="approved")}
 function renderLogisticsAdminResults(){
-  if(!adminMode)return;const body=$("logisticsAdminBody"),summary=$("logisticsSummary"),chart=$("logisticsModeChart"),vehicles=$("logisticsVehicleFrequency");if(!body)return;
-  const rows=[...logisticsEntries].sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0)),approved=rows.filter(x=>x.status==="approved"),pending=rows.filter(x=>x.status==="pending");
-  if(summary)summary.innerHTML=`<div class="archive-stat"><b>${rows.length}</b><span>JUMLAH REKOD</span></div><div class="archive-stat"><b>${pending.length}</b><span>MENUNGGU</span></div><div class="archive-stat"><b>${approved.length}</b><span>DILULUSKAN</span></div>`;
-  const modes=["own_car","carpool","grab","other"],counts=Object.fromEntries(modes.map(m=>[m,approved.filter(x=>x.transportMode===m).length])),max=Math.max(1,...Object.values(counts));if(chart)chart.innerHTML=modes.map(m=>`<div class="mini-bar-row"><span>${esc(transportModeLabel(m))}</span><div><i style="width:${Math.round(counts[m]/max*100)}%"></i></div><b>${counts[m]}</b></div>`).join("");
-  const plateMap=new Map();approved.filter(x=>x.plateNo).forEach(x=>{const k=x.plateNo.toUpperCase();const v=plateMap.get(k)||{plate:k,owner:x.carOwner||"-",count:0};v.count++;plateMap.set(k,v)});const ranked=[...plateMap.values()].sort((a,b)=>b.count-a.count);if(vehicles)vehicles.innerHTML=ranked.length?ranked.map(x=>`<div class="vehicle-frequency"><b>${esc(x.plate)}</b><span>${esc(x.owner)} • ${x.count} rekod</span></div>`).join(""):'<div class="meta">Belum ada rekod kenderaan diluluskan.</div>';
-  body.innerHTML=rows.length?rows.map(x=>`<tr><td><b>${x.classDate?esc(fmtDate(x.classDate)):"-"}</b><span class="table-subline">${x.createdAt?fmtDateTime(x.createdAt):""}</span></td><td>${esc(transportModeLabel(x.transportMode))}</td><td><b>${esc((x.participantNames||[]).join(", ")||"-")}</b>${x.additionalPeople?`<span class="table-subline">Tambahan: ${esc(x.additionalPeople)}</span>`:""}</td><td>${x.plateNo?`<b>${esc(x.plateNo)}</b><span class="table-subline">${esc(x.carOwner||"-")}</span>`:"-"}</td><td>${esc(x.extraMaterials||"-")}${x.adminNote?`<span class="table-subline">Catatan Pentadbir: ${esc(x.adminNote)}</span>`:""}</td><td>${badge(x.status==="approved"?"approved":x.status==="rejected"?"rejected":"pending")}</td><td>${x.status==="pending"?`<div class="actions compact-actions"><button class="primary" type="button" onclick="approveLogistics('${x.id}')">Luluskan</button><button class="danger" type="button" onclick="rejectLogistics('${x.id}')">Tidak Lulus</button></div>`:'-'}</td></tr>`).join(""):'<tr><td colspan="7"><div class="empty">Belum ada rekod logistik.</div></td></tr>'
+  if(!adminMode)return;
+  const body=$("logisticsAdminBody"),materialsBody=$("logisticsMaterialsAdminBody"),summary=$("logisticsSummary"),chart=$("logisticsModeChart"),vehicles=$("logisticsVehicleFrequency");
+  if(!body||!materialsBody)return;
+
+  const all=[...logisticsEntries].sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  const transportRows=all.filter(x=>x.entryType!=="materials");
+  const materialRows=all.filter(x=>x.entryType==="materials");
+  const approvedTransport=transportRows.filter(x=>x.status==="approved");
+  const pending=all.filter(x=>x.status==="pending");
+  const approved=all.filter(x=>x.status==="approved");
+
+  if(summary)summary.innerHTML=`<div class="archive-stat"><b>${all.length}</b><span>JUMLAH REKOD</span></div><div class="archive-stat"><b>${pending.length}</b><span>MENUNGGU</span></div><div class="archive-stat"><b>${approved.length}</b><span>DILULUSKAN</span></div>`;
+
+  const modes=["own_car","carpool","grab","other"],counts=Object.fromEntries(modes.map(m=>[m,approvedTransport.filter(x=>x.transportMode===m).length])),max=Math.max(1,...Object.values(counts));
+  if(chart)chart.innerHTML=modes.map(m=>`<div class="mini-bar-row"><span>${esc(transportModeLabel(m))}</span><div><i style="width:${Math.round(counts[m]/max*100)}%"></i></div><b>${counts[m]}</b></div>`).join("");
+
+  const plateMap=new Map();
+  approvedTransport.filter(x=>x.plateNo).forEach(x=>{const k=x.plateNo.toUpperCase();const v=plateMap.get(k)||{plate:k,owner:x.carOwner||"-",count:0};v.count++;plateMap.set(k,v)});
+  const ranked=[...plateMap.values()].sort((a,b)=>b.count-a.count);
+  if(vehicles)vehicles.innerHTML=ranked.length?ranked.map(x=>`<div class="vehicle-frequency"><b>${esc(x.plate)}</b><span>${esc(x.owner)} • ${x.count} rekod</span></div>`).join(""):'<div class="meta">Belum ada rekod kenderaan diluluskan.</div>';
+
+  materialsBody.innerHTML=materialRows.length?materialRows.map(x=>`<tr>
+    <td><b>${x.classDate?esc(fmtDate(x.classDate)):"-"}</b><span class="table-subline">${x.createdAt?fmtDateTime(x.createdAt):""}</span></td>
+    <td><b>${esc(x.submitterName||"-")}</b><span class="table-subline">${esc(x.submitterMatric||"-")}</span></td>
+    <td>${esc(x.extraMaterials||"-")}${x.adminNote?`<span class="table-subline">Catatan Pentadbir: ${esc(x.adminNote)}</span>`:""}</td>
+    <td>${badge(x.status==="approved"?"approved":x.status==="rejected"?"rejected":"pending")}</td>
+    <td>${x.status==="pending"?`<div class="actions compact-actions"><button class="primary" type="button" onclick="approveLogistics('${x.id}')">Luluskan</button><button class="danger" type="button" onclick="rejectLogistics('${x.id}')">Tidak Lulus</button></div>`:'-'}</td>
+  </tr>`).join(""):'<tr><td colspan="5"><div class="empty">Belum ada rekod bahan tambahan.</div></td></tr>';
+
+  body.innerHTML=transportRows.length?transportRows.map(x=>`<tr>
+    <td><b>${x.classDate?esc(fmtDate(x.classDate)):"-"}</b><span class="table-subline">${x.createdAt?fmtDateTime(x.createdAt):""}</span></td>
+    <td>${esc(transportModeLabel(x.transportMode))}</td>
+    <td><b>${esc((x.participantNames||[]).join(", ")||"-")}</b>${x.additionalPeople?`<span class="table-subline">Tambahan: ${esc(x.additionalPeople)}</span>`:""}</td>
+    <td>${x.plateNo?`<b>${esc(x.plateNo)}</b><span class="table-subline">${esc(x.carOwner||"-")}</span>`:"-"}</td>
+    <td>${badge(x.status==="approved"?"approved":x.status==="rejected"?"rejected":"pending")}</td>
+    <td>${x.status==="pending"?`<div class="actions compact-actions"><button class="primary" type="button" onclick="approveLogistics('${x.id}')">Luluskan</button><button class="danger" type="button" onclick="rejectLogistics('${x.id}')">Tidak Lulus</button></div>`:'-'}</td>
+  </tr>`).join(""):'<tr><td colspan="6"><div class="empty">Belum ada rekod pengangkutan.</div></td></tr>'
 }
-async function approveLogistics(id){if(!adminMode)return;const x=logisticsEntries.find(r=>r.id===id);if(!x)return;const note=prompt("Catatan Pentadbir (pilihan):",x.adminNote||"");if(note===null)return;const {error}=await supabaseClient.from("logistics_entries").update({status:"approved",admin_note:note.trim()||null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert(error.message);return}if(x.submittedBy)await pushNotification({userId:x.submittedBy,message:`Maklumat logistik untuk ${fmtDate(x.classDate)} telah DILULUSKAN.`,linkType:"logistics",linkId:id});await loadSupabaseState()}
-async function rejectLogistics(id){if(!adminMode)return;const x=logisticsEntries.find(r=>r.id===id),note=prompt("Sebab / catatan tidak diluluskan:",x?.adminNote||"");if(!x||note===null)return;const {error}=await supabaseClient.from("logistics_entries").update({status:"rejected",admin_note:note.trim()||null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert(error.message);return}if(x.submittedBy)await pushNotification({userId:x.submittedBy,message:`Maklumat logistik untuk ${fmtDate(x.classDate)} tidak diluluskan.${note.trim()?` Catatan: ${note.trim()}`:""}`,linkType:"logistics",linkId:id});await loadSupabaseState()}
+async function approveLogistics(id){
+  if(!adminMode)return;const x=logisticsEntries.find(r=>r.id===id);if(!x)return;
+  const note=prompt("Catatan Pentadbir (pilihan):",x.adminNote||"");if(note===null)return;
+  const {error}=await supabaseClient.from("logistics_entries").update({status:"approved",admin_note:note.trim()||null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);
+  if(error){alert(error.message);return}
+  if(x.submittedBy)await pushNotification({userId:x.submittedBy,message:`${x.entryType==="materials"?"Bahan tambahan":"Maklumat pengangkutan"} untuk ${fmtDate(x.classDate)} telah DILULUSKAN.`,linkType:"logistics",linkId:id});
+  await loadSupabaseState()
+}
+async function rejectLogistics(id){
+  if(!adminMode)return;const x=logisticsEntries.find(r=>r.id===id),note=prompt("Sebab / catatan tidak diluluskan:",x?.adminNote||"");if(!x||note===null)return;
+  const {error}=await supabaseClient.from("logistics_entries").update({status:"rejected",admin_note:note.trim()||null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);
+  if(error){alert(error.message);return}
+  if(x.submittedBy)await pushNotification({userId:x.submittedBy,message:`${x.entryType==="materials"?"Bahan tambahan":"Maklumat pengangkutan"} untuk ${fmtDate(x.classDate)} tidak diluluskan.${note.trim()?` Catatan: ${note.trim()}`:""}`,linkType:"logistics",linkId:id});
+  await loadSupabaseState()
+}
 
 // ---------- Email settings ----------
 function saveEmailSettings(){if(!adminMode)return;const admin=$("emailAdminAddress").value.trim().toLowerCase(),url=$("emailWebhookUrl").value.trim();if(admin&&!/^\S+@\S+\.\S+$/.test(admin)){alert("E-mel Pentadbir tidak sah.");return}if(url&&!/^https?:\/\//i.test(url)){alert("Webhook URL perlu bermula dengan http:// atau https://");return}emailSettings={enabled:$("emailEnabled").checked,adminEmail:admin,webhookUrl:url};saveAll();renderEmailSettings();alert("Tetapan e-mel disimpan.")}
@@ -1429,7 +1528,7 @@ function mapReport(r,atts){return {id:r.id,bookingId:r.booking_id,taught:r.taugh
 
 
 function mapRecycleEntry(r){return {id:r.id,recordType:r.record_type||"rekod",recordId:r.record_id||"",label:r.record_label||"Rekod",deletedByEmail:r.deleted_by_email||"",deletedByMatric:r.deleted_by_matric||"",ownerEmail:r.owner_email||"",ownerMatric:r.owner_matric||"",snapshot:r.snapshot||{},deletedAt:r.deleted_at}}
-function mapLogisticsEntry(r){return {id:r.id,classDate:r.class_date||"",submittedBy:r.submitted_by||"",submitterEmail:r.submitter_email||"",submitterMatric:r.submitter_matric||"",submitterName:r.submitter_name||"",transportMode:r.transport_mode||"other",carOwner:r.car_owner||"",plateNo:r.plate_no||"",participantMatrics:r.participant_matrics||[],participantNames:r.participant_names||[],additionalPeople:r.additional_people||"",extraMaterials:r.extra_materials||"",adminNote:r.admin_note||"",status:r.status||"pending",createdAt:r.created_at,updatedAt:r.updated_at,reviewedBy:r.reviewed_by||"",reviewedAt:r.reviewed_at||null}}
+function mapLogisticsEntry(r){return {id:r.id,entryType:r.entry_type||"transport",classDate:r.class_date||"",submittedBy:r.submitted_by||"",submitterEmail:r.submitter_email||"",submitterMatric:r.submitter_matric||"",submitterName:r.submitter_name||"",transportMode:r.transport_mode||"other",carOwner:r.car_owner||"",plateNo:r.plate_no||"",participantMatrics:r.participant_matrics||[],participantNames:r.participant_names||[],additionalPeople:r.additional_people||"",extraMaterials:r.extra_materials||"",adminNote:r.admin_note||"",status:r.status||"pending",createdAt:r.created_at,updatedAt:r.updated_at,reviewedBy:r.reviewed_by||"",reviewedAt:r.reviewed_at||null}}
 function transportModeLabel(mode){return ({own_car:"Kereta Sendiri",carpool:"Car-pool / Tumpang",grab:"Grab / E-hailing",other:"Lain-lain"})[mode]||mode||"-"}
 function logisticsStatusLabel(status){return ({pending:"Menunggu Kelulusan",approved:"Diluluskan",rejected:"Tidak Diluluskan"})[status]||status}
 
@@ -1548,19 +1647,19 @@ async function adminLogin(){
 async function logout(){try{await supabaseClient?.auth.signOut()}catch{}currentUserId="";currentEmail="";currentMatric="";currentRole="";adminMode=false;storageRemove(KEYS.sessionEmail);storageRemove(KEYS.sessionMatric);storageRemove(KEYS.sessionRole);toggleSidebar(false);$("loginOverlay").classList.remove("hidden");document.querySelectorAll(".admin-only").forEach(el=>el.classList.add("hidden"));document.querySelectorAll(".mentor-only").forEach(el=>el.classList.remove("hidden"));$("adminNavBtn")?.classList.add("hidden");$("adminBookingsQuickNav")?.classList.add("hidden");$("currentUserLabel").textContent="-";$("sidebarUserLabel").textContent="-";$("heroUserPill").textContent="Belum log masuk";setLoginMode("mentor")}
 function refreshIdentity(){const d=adminMode?`Pentadbir • ${userDisplay()}`:userDisplay();$("currentUserLabel").textContent=d;$("sidebarUserLabel").textContent=d;$("heroUserPill").textContent=d;if(adminMode)$("adminIdentity").textContent=`${currentEmail} • ${currentMatric}`;$("backendStatus").textContent="Sistem Aktif";$("backendStatus").classList.add("online")}
 
-async function submitBooking(){const sid=$("slotId").value,s=slotById(sid),name=$("mentorName").value.trim(),studentId=$("studentSelect").value,consent=document.querySelector('input[name="reassignConsent"]:checked')?.value||"no";if(slotHasEnded(s)){alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");closeModal("bookingModal");renderSlots();return}if(!name||name.length<3){alert("Sila tulis NAMA PENUH mentor.");return}if(!studentId){alert("Pilih mentee.");return}if(!currentUserId){alert("Sesi login tidak ditemui. Sila log masuk semula.");return}const capacity=capacityForSlot(s),active=activeApplicationsForSlot(sid).length;if(active>=capacity){alert("Had permohonan untuk slot ini telah dicapai. Sila tunggu sehingga Pentadbir menolak permohonan atau mentor lain menarik diri.");await loadSupabaseState();return}const avail=availableStudents(s);if(!avail.some(x=>x.id===studentId)){alert("Mentee / slot ini tidak lagi tersedia.");await loadSupabaseState();return}const st=studentId==="pksk-pair"?{id:null,name:"Ariana + Fathemah"}:studentById(studentId);const ticket=makeTicket();const {data,error}=await supabaseClient.from("bookings").insert({booking_no:ticket,slot_id:sid,mentor_id:currentUserId,mentor_name:name,mentor_matric:currentMatric,mentor_email:currentEmail,requested_mentee_id:st.id,allow_reassignment:consent==="yes",mentor_note:$("bookingNote").value.trim(),status:"pending"}).select().single();if(error){const msg=String(error.message||"");if(msg.includes("SLOT_ALREADY_ENDED"))alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");else if(msg.includes("MENTEE_ALREADY_RESERVED"))alert("Mentee ini baru sahaja dipilih oleh mentor lain yang menghantar lebih awal. Senarai mentee akan dikemas kini.");else if(msg.includes("SLOT_APPLICATION_LIMIT_REACHED"))alert("Had permohonan slot ini telah penuh. Ruang akan dibuka semula apabila ada permohonan ditolak atau ditarik diri.");else if(msg.includes("MENTEE_NOT_AVAILABLE_FOR_SLOT"))alert("Mentee ini telah ditandakan tidak hadir / tidak tersedia untuk slot ini. Sila pilih mentee lain.");else alert("Tempahan tidak berjaya: "+msg);await loadSupabaseState();refreshOpenBookingMenteeOptions();return}closeModal("bookingModal");await pushNotification({audience:"admin",message:`Tempahan baharu ${ticket}: ${name} (${currentMatric}) memohon ${st.name} untuk ${s.subject} ${s.group}.`,linkType:"booking",linkId:data.id});await loadSupabaseState();speakThanks();alert("Tempahan dihantar kepada Pentadbir untuk kelulusan.")}
+async function submitBooking(){const sid=$("slotId").value,s=slotById(sid),name=$("mentorName").value.trim().toUpperCase(),studentId=$("studentSelect").value,consent=document.querySelector('input[name="reassignConsent"]:checked')?.value||"no";if(slotHasEnded(s)){alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");closeModal("bookingModal");renderSlots();return}if(!name||name.length<3){alert("Sila tulis NAMA PENUH mentor.");return}if(!studentId){alert("Pilih mentee.");return}if(!currentUserId){alert("Sesi login tidak ditemui. Sila log masuk semula.");return}const capacity=capacityForSlot(s),active=activeApplicationsForSlot(sid).length;if(active>=capacity){alert("Had permohonan untuk slot ini telah dicapai. Sila tunggu sehingga Pentadbir menolak permohonan atau mentor lain menarik diri.");await loadSupabaseState();return}const avail=availableStudents(s);if(!avail.some(x=>x.id===studentId)){alert("Mentee / slot ini tidak lagi tersedia.");await loadSupabaseState();return}const st=studentId==="pksk-pair"?{id:null,name:"Ariana + Fathemah"}:studentById(studentId);const ticket=makeTicket();const {data,error}=await supabaseClient.from("bookings").insert({booking_no:ticket,slot_id:sid,mentor_id:currentUserId,mentor_name:name,mentor_matric:currentMatric,mentor_email:currentEmail,requested_mentee_id:st.id,allow_reassignment:consent==="yes",mentor_note:$("bookingNote").value.trim(),status:"pending"}).select().single();if(error){const msg=String(error.message||"");if(msg.includes("SLOT_ALREADY_ENDED"))alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");else if(msg.includes("MENTEE_ALREADY_RESERVED"))alert("Mentee ini baru sahaja dipilih oleh mentor lain yang menghantar lebih awal. Senarai mentee akan dikemas kini.");else if(msg.includes("SLOT_APPLICATION_LIMIT_REACHED"))alert("Had permohonan slot ini telah penuh. Ruang akan dibuka semula apabila ada permohonan ditolak atau ditarik diri.");else if(msg.includes("MENTEE_NOT_AVAILABLE_FOR_SLOT"))alert("Mentee ini telah ditandakan tidak hadir / tidak tersedia untuk slot ini. Sila pilih mentee lain.");else alert("Tempahan tidak berjaya: "+msg);await loadSupabaseState();refreshOpenBookingMenteeOptions();return}closeModal("bookingModal");await pushNotification({audience:"admin",message:`Tempahan baharu ${ticket}: ${name} (${currentMatric}) memohon ${st.name} untuk ${s.subject} ${s.group}.`,linkType:"booking",linkId:data.id});await loadSupabaseState();speakThanks();alert("Tempahan dihantar kepada Pentadbir untuk kelulusan.")}
 async function approveBooking(id){const b=bookings.find(x=>x.id===id),s=slotById(b?.slotId);if(!b||!s)return;const req=b.requestedStudentId==="pksk-pair"?null:b.requestedStudentId;const {error}=await supabaseClient.from("bookings").update({assigned_mentee_id:req,status:"approved",admin_note:null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert("Tidak dapat meluluskan: "+error.message);return}await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} telah DILULUSKAN. Mentee: ${b.requestedStudentName||"Ariana + Fathemah"}.`,linkType:"booking",linkId:id});await loadSupabaseState()}
 async function confirmReassign(){const b=bookings.find(x=>x.id===activeReassignId),sid=$("reassignStudent").value,st=sid==="pksk-pair"?{id:null,name:"Ariana + Fathemah"}:studentById(sid);if(!b||!st)return;const {error}=await supabaseClient.from("bookings").update({assigned_mentee_id:st.id,status:"reassigned",admin_note:$("reassignNote").value.trim(),reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",b.id);if(error){alert("Pertukaran tidak berjaya: "+error.message);return}closeModal("reassignModal");await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} diluluskan dengan mentee: ${st.name}.`,linkType:"booking",linkId:b.id});await loadSupabaseState()}
 async function rejectBooking(id){const b=bookings.find(x=>x.id===id),n=prompt("Sebab tempahan tidak diluluskan:","");if(!b||n===null)return;const {error}=await supabaseClient.from("bookings").update({status:"rejected",admin_note:n,assigned_mentee_id:null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert(error.message);return}await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} tidak diluluskan.${n?` Catatan: ${n}`:""}`,linkType:"booking",linkId:id});await loadSupabaseState()}
 async function revertBooking(id){const b=bookings.find(x=>x.id===id);if(!b||!confirm("Buka semula tempahan ini?"))return;const {error}=await supabaseClient.from("bookings").update({status:"reverted",assigned_mentee_id:null,admin_note:"Kelulusan dibuka semula oleh Pentadbir."}).eq("id",id);if(error){alert(error.message);return}await pushNotification({userId:b.userId,message:`Kelulusan tempahan ${b.ticket} telah dibuka semula.`,linkType:"booking",linkId:id});await loadSupabaseState()}
 async function restorePending(id){const b=bookings.find(x=>x.id===id);if(!b)return;const {error}=await supabaseClient.from("bookings").update({status:"pending"}).eq("id",id);if(error){alert(error.message);return}await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} dikembalikan ke status Menunggu Semakan.`,linkType:"booking",linkId:id});await loadSupabaseState()}
 async function deleteBookingRecord(id){const b=bookings.find(x=>x.id===id);if(!b||!confirm(`Padam rekod tempahan ${b.ticket}?`))return;const {error}=await supabaseClient.from("bookings").delete().eq("id",id);if(error){alert(error.message);return}await loadSupabaseState()}
-async function adminEditBooking(id){const b=bookings.find(x=>x.id===id);if(!b)return;const name=prompt("Nama penuh mentor:",b.mentorName||"");if(name===null)return;const email=prompt("E-mel mentor:",b.email||"");if(email===null)return;const matric=prompt("Nombor matrik:",b.mentorMatric||"");if(matric===null)return;const note=prompt("Catatan mentor / rekod:",b.mentorNote||"");if(note===null)return;const {error}=await supabaseClient.from("bookings").update({mentor_name:name.trim(),mentor_email:email.trim().toLowerCase(),mentor_matric:matric.trim(),mentor_note:note.trim()}).eq("id",id);if(error){alert(error.message);return}await loadSupabaseState();alert("Rekod tempahan berjaya disunting.")}
+async function adminEditBooking(id){const b=bookings.find(x=>x.id===id);if(!b)return;const name=prompt("Nama penuh mentor:",b.mentorName||"");if(name===null)return;const email=prompt("E-mel mentor:",b.email||"");if(email===null)return;const matric=prompt("Nombor matrik:",b.mentorMatric||"");if(matric===null)return;const note=prompt("Catatan mentor / rekod:",b.mentorNote||"");if(note===null)return;const {error}=await supabaseClient.from("bookings").update({mentor_name:name.trim().toUpperCase(),mentor_email:email.trim().toLowerCase(),mentor_matric:matric.trim(),mentor_note:note.trim()}).eq("id",id);if(error){alert(error.message);return}await loadSupabaseState();alert("Rekod tempahan berjaya disunting.")}
 
 async function saveMenteeProfile(){if(!adminMode)return;let id=$("menteeEditId").value.trim(),name=$("menteeEditName").value.trim(),group=$("menteeEditGroup").value,summary=$("menteeEditSummary").value.trim();if(!name||!group){alert("Nama dan Tahun/Tingkatan diperlukan.");return}let rec;if(id){const u=await supabaseClient.from("mentees").update({full_name:name,group_name:group,description:summary}).eq("id",id).select().single();if(u.error){alert(u.error.message);return}rec=u.data}else{const i=await supabaseClient.from("mentees").insert({short_name:name,full_name:name,group_name:group,description:summary,created_by:currentUserId}).select().single();if(i.error){alert(i.error.message);return}rec=i.data;id=rec.id}const f=$("menteeEditPhoto").files?.[0];if(f){const path=`mentees/${id}/${Date.now()}-${cleanFileName(f.name)}`;try{await uploadSb("mentee-photos",path,f);const u=await supabaseClient.from("mentees").update({photo_path:path}).eq("id",id);if(u.error)throw u.error}catch(e){alert("Maklumat disimpan tetapi gambar gagal dimuat naik: "+e.message)}}closeModal("menteeEditModal");await loadSupabaseState();alert("Maklumat mentee berjaya disimpan.")}
 async function deleteMentee(id){const s=studentById(id);if(!adminMode||!s||!confirm(`Padam mentee ${s.name}?`))return;const {error}=await supabaseClient.from("mentees").delete().eq("id",id);if(error){alert("Tidak dapat dipadam. Mungkin mentee masih mempunyai rekod tempahan. "+error.message);return}await loadSupabaseState()}
 
-async function saveMentorProfile(){const fullName=$("mentorProfileName").value.trim(),matric=$("mentorProfileMatric").value.trim().toUpperCase(),faculty=$("mentorProfileFaculty").value.trim(),course=$("mentorProfileCourse").value.trim(),about=$("mentorProfileAbout").value.trim(),subjects=[...document.querySelectorAll('input[name="mentorSubject"]:checked')].map(x=>x.value),levels=[...document.querySelectorAll('input[name="mentorLevel"]:checked')].map(x=>x.value);if(!fullName||!matric||!faculty||!course||!about||!subjects.length||!levels.length){alert("Lengkapkan semua ruangan wajib.");return}if(wordCount(about)>50){alert("Penerangan diri maksimum 50 patah perkataan.");return}let photoPath=null;const f=$("mentorProfilePhoto").files?.[0];if(f){photoPath=`${currentUserId}/profile/${Date.now()}-${cleanFileName(f.name)}`;try{await uploadSb("mentor-photos",photoPath,f)}catch(e){alert("Gambar gagal dimuat naik: "+e.message);return}}const publicConsent=!!$("mentorProfilePublicConsent")?.checked;const payload={email:currentEmail,matric_no:matric,full_name:fullName,faculty,course,phone:$("mentorProfilePhone").value.trim(),teaching_strength:$("mentorProfileStrength").value.trim(),about,subjects,levels,public_display_consent:publicConsent};if(photoPath)payload.photo_path=photoPath;const {error}=await supabaseClient.from("profiles").update(payload).eq("id",currentUserId);if(error){alert(error.message);return}
+async function saveMentorProfile(){const fullName=$("mentorProfileName").value.trim().toUpperCase(),matric=$("mentorProfileMatric").value.trim().toUpperCase(),faculty=$("mentorProfileFaculty").value.trim(),course=$("mentorProfileCourse").value.trim(),about=$("mentorProfileAbout").value.trim(),subjects=[...document.querySelectorAll('input[name="mentorSubject"]:checked')].map(x=>x.value),levels=[...document.querySelectorAll('input[name="mentorLevel"]:checked')].map(x=>x.value);if(!fullName||!matric||!faculty||!course||!about||!subjects.length||!levels.length){alert("Lengkapkan semua ruangan wajib.");return}if(wordCount(about)>50){alert("Penerangan diri maksimum 50 patah perkataan.");return}let photoPath=null;const f=$("mentorProfilePhoto").files?.[0];if(f){photoPath=`${currentUserId}/profile/${Date.now()}-${cleanFileName(f.name)}`;try{await uploadSb("mentor-photos",photoPath,f)}catch(e){alert("Gambar gagal dimuat naik: "+e.message);return}}const publicConsent=!!$("mentorProfilePublicConsent")?.checked;const payload={email:currentEmail,matric_no:matric,full_name:fullName,faculty,course,phone:$("mentorProfilePhone").value.trim(),teaching_strength:$("mentorProfileStrength").value.trim(),about,subjects,levels,public_display_consent:publicConsent};if(photoPath)payload.photo_path=photoPath;const {error}=await supabaseClient.from("profiles").update(payload).eq("id",currentUserId);if(error){alert(error.message);return}
 const {error:syncError}=await supabaseClient.rpc("sync_my_mentor_profile",{p_full_name:fullName,p_matric:matric,p_faculty:faculty,p_course:course,p_phone:payload.phone,p_teaching_strength:payload.teaching_strength,p_about:about,p_subjects:subjects,p_levels:levels,p_public_display_consent:publicConsent,p_photo_path:photoPath});
 if(syncError){console.warn("Profile sync:",syncError.message)}
 currentMatric=matric;storageSet(KEYS.sessionMatric,matric);await loadSupabaseState();speakThanks();alert("Profil Mentor berjaya disimpan.")}
@@ -1739,7 +1838,19 @@ async function markAllNotificationsRead(){const ids=currentNotifications().filte
 async function markAllAdminNotificationsRead(){const ids=notifications.filter(n=>n.target==="*admin*"&&!n.read).map(n=>n.id);if(ids.length)await supabaseClient.from("notifications").update({is_read:true}).in("id",ids);await loadSupabaseState()}
 async function openNotification(id){const n=notifications.find(x=>x.id===id);if(!n)return;await supabaseClient.from("notifications").update({is_read:true}).eq("id",id);n.read=true;renderNotifications();$("notificationPopover")?.classList.remove("open");const bookingId=notificationBookingId(n);if(bookingId){notificationFocusBookingId=bookingId;if(adminMode){activeReviewBookingId=bookingId;if($("statusFilter"))$("statusFilter").value="all";if($("adminSearch"))$("adminSearch").value="";switchTab("admin");switchAdminPane("bookings");renderAdminBookings();setTimeout(()=>document.getElementById(`admin-booking-${bookingId}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80)}else{setMentorBookingFilter("all");switchTab("mybooking");renderMyBookings()}return}if(n.event==="report"){if(adminMode){switchTab("admin");switchAdminPane("adminReports")}else switchTab("reports");return}if(n.event==="logistics"){switchTab("logistics");return}}
 
-function setupRealtime(){if(!supabaseClient||realtimeChannel)return;const refresh=()=>loadSupabaseState();realtimeChannel=supabaseClient.channel("helaa-rukaiyah-live").on("postgres_changes",{event:"*",schema:"public",table:"bookings"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"notifications"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"schedule_slots"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"materials"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"material_files"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentees"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"profiles"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"reports"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentor_evaluations"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"logistics_entries"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"recycle_bin"},refresh).subscribe()}
+
+let mentorReminderHeartbeat=null;
+async function runMentorReminderHeartbeat(){
+  if(!supabaseClient||!currentUserId)return;
+  try{await supabaseClient.rpc("send_mentor_slot_reminders")}catch(err){console.warn("Reminder heartbeat:",err?.message||err)}
+}
+function setupMentorReminderHeartbeat(){
+  if(mentorReminderHeartbeat)return;
+  setTimeout(runMentorReminderHeartbeat,1500);
+  mentorReminderHeartbeat=setInterval(runMentorReminderHeartbeat,60000);
+}
+
+function setupRealtime(){setupMentorReminderHeartbeat();if(!supabaseClient||realtimeChannel)return;const refresh=()=>loadSupabaseState();realtimeChannel=supabaseClient.channel("helaa-rukaiyah-live").on("postgres_changes",{event:"*",schema:"public",table:"bookings"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"notifications"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"schedule_slots"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"materials"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"material_files"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentees"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"profiles"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"reports"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentor_evaluations"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"logistics_entries"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"recycle_bin"},refresh).subscribe()}
 
 async function init(){
   try{
@@ -1811,7 +1922,7 @@ Object.assign(window,{
   openMenteeCreate,openMenteeEdit,saveMenteeProfile,deleteMentee,
   approveBooking,openReassign,confirmReassign,rejectBooking,revertBooking,restorePending,withdrawBooking,adminWithdrawBooking,adminEditBooking,deleteBookingRecord,
   approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openArchiveReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation,
-  renderRecycleBin,renderLogisticsPage,renderLogisticsParticipants,updateLogisticsVehicleFields,updateLogisticsParticipantCount,submitLogisticsEntry,approveLogistics,rejectLogistics,
+  renderRecycleBin,renderLogisticsPage,renderLogisticsParticipants,updateLogisticsVehicleFields,updateLogisticsParticipantCount,submitAdditionalMaterialEntry,submitLogisticsEntry,approveLogistics,rejectLogistics,adminEditMentorName,
   renderAdminMentorLive,setAdminLiveDate,shiftAdminLiveDate
 });
 

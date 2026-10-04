@@ -335,3 +335,18 @@ button{cursor:pointer}
   .logistics-summary{grid-template-columns:repeat(3,minmax(120px,1fr));overflow-x:auto}
 }
 @media(max-width:620px){.mini-bar-row{grid-template-columns:110px 1fr 24px}.recycle-main{display:block}.recycle-owner{text-align:left;margin-top:8px}}
+
+
+/* v12.9 menu + recognition + split logistics */
+.logistics-subpanel{
+  border:1px solid var(--line);
+  border-radius:16px;
+  background:#fbfdff;
+  padding:16px;
+}
+.additional-material-form{background:#f8fbfd}
+.transport-form{background:#fff}
+.logistics-subpanel h3{margin:2px 0 4px;color:#203d59}
+#mentorRecognition .admin-live-datebar{margin-top:14px}
+#mentorRecognition .horizontal-table-wrap{margin-top:10px}
+#mentorProfileName,#mentorName{text-transform:uppercase}
