@@ -191,6 +191,58 @@ function approvedForSlot(id){return bookings.filter(b=>b.slotId===id&&isFinalSta
 function makeTicket(){return "HL-"+Date.now().toString(36).slice(-6).toUpperCase()}
 function wordCount(text){return String(text||"").trim()?String(text).trim().split(/\s+/).length:0}
 
+function malaysiaTodayISO(){
+  try{
+    const parts=new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Kuala_Lumpur",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
+    const obj=Object.fromEntries(parts.map(p=>[p.type,p.value]));
+    return `${obj.year}-${obj.month}-${obj.day}`;
+  }catch{
+    const d=new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  }
+}
+function defaultBookingDate(){
+  const dates=[...new Set(SCHEDULE.map(s=>s.date).filter(Boolean))].sort();
+  if(!dates.length)return "";
+  const today=malaysiaTodayISO();
+  if(dates.includes(today))return today;
+  return dates.find(d=>d>today)||dates[dates.length-1];
+}
+function slotStartMinutes(slot){
+  const m=String(slot?.time||"").toUpperCase().match(/(\d{1,2})(?:[:.](\d{2}))?\s*(AM|PM)/);
+  if(!m)return 9999;
+  let h=Number(m[1]),min=Number(m[2]||0);
+  if(m[3]==="PM"&&h!==12)h+=12;
+  if(m[3]==="AM"&&h===12)h=0;
+  return h*60+min;
+}
+function educationGroupRank(group){
+  const g=String(group||"").trim();
+  let m=g.match(/^Tahun\s+(\d+)/i);
+  if(m)return Number(m[1]);
+  m=g.match(/^Tingkatan\s+(\d+)/i);
+  if(m)return 100+Number(m[1]);
+  m=g.match(/^SRA\s+Tahun\s+(\d+)/i);
+  if(m)return 200+Number(m[1]);
+  return 999;
+}
+function slotDaypart(slot){
+  const min=slotStartMinutes(slot);
+  if(min<12*60)return "morning";
+  if(min<18*60)return "afternoon";
+  return "night";
+}
+function bookingSlotSort(a,b){
+  return slotStartMinutes(a)-slotStartMinutes(b)
+    || educationGroupRank(a.group)-educationGroupRank(b.group)
+    || String(a.subject||"").localeCompare(String(b.subject||""),"ms")
+    || String(a.id||"").localeCompare(String(b.id||""));
+}
+function bookingDaypartLabel(key){
+  return ({morning:"SLOT PAGI",afternoon:"SLOT PETANG",night:"SLOT MALAM"})[key]||key;
+}
+
+
 function slotEndDateTime(slot){
   if(!slot?.date||!slot?.time)return null;
   const matches=[...String(slot.time).toUpperCase().matchAll(/(\d{1,2})(?:[:.](\d{2}))?\s*(AM|PM)/g)];
@@ -387,7 +439,7 @@ function switchTab(id){
   if(adminMode&&id==="mybooking"){openAdminPane("bookings");return}
   document.querySelectorAll(".sidebar-nav button[data-tab]").forEach(b=>b.classList.toggle("active",b.dataset.tab===id));
   document.querySelectorAll(".section").forEach(s=>s.classList.toggle("active",s.id===id));toggleSidebar(false);$("notificationPopover")?.classList.remove("open");
-  if(id==="booking"){renderDays();renderSlots()}
+  if(id==="booking"){selectedDate=defaultBookingDate();renderDays();renderSlots()}
   if(id==="mybooking")renderMyBookings();
   if(id==="reports")renderMentorReports();
   if(id==="approvedReports")renderApprovedReports();
@@ -441,14 +493,30 @@ function availableStudents(slot,excludeBookingId=""){
 
 // ---------- Schedule / booking ----------
 function renderDays(){
-  const dates=[...new Set(SCHEDULE.map(s=>s.date))];
-  $("dayButtons").innerHTML=dates.map(d=>{const s=SCHEDULE.find(x=>x.date===d);return `<button class="day-btn ${d===selectedDate?"active":""}" onclick="selectDate('${d}')"><strong>${esc(s.day)}</strong><span>${fmtDate(d)}</span></button>`}).join("")
+  const dates=[...new Set(SCHEDULE.map(s=>s.date).filter(Boolean))].sort();
+  const today=malaysiaTodayISO();
+  $("dayButtons").innerHTML=dates.map(d=>{const s=SCHEDULE.find(x=>x.date===d);return `<button class="day-btn ${d===selectedDate?"active":""} ${d===today?"today":""}" onclick="selectDate('${d}')"><strong>${esc(s.day)}${d===today?` <em>Hari Ini</em>`:""}</strong><span>${fmtDate(d)}</span></button>`}).join("")
 }
 function selectDate(d){selectedDate=d;renderDays();renderSlots()}
 function renderSlots(){
-  const slots=SCHEDULE.filter(s=>s.date===selectedDate),first=slots[0];if(!first)return;
-  $("selectedDayTitle").textContent=`${first.day}, ${fmtDate(selectedDate)}`;$("selectedDayHint").textContent=`${slots.length} pilihan kelas`;
-  $("slotGrid").innerHTML=slots.map(s=>{
+  const slots=SCHEDULE.filter(s=>s.date===selectedDate).sort(bookingSlotSort),first=slots[0];
+  if(!first){
+    $("selectedDayTitle").textContent="Tiada jadual";
+    $("selectedDayHint").textContent="";
+    $("slotGrid").innerHTML='<div class="empty">Tiada slot untuk tarikh ini.</div>';
+    return;
+  }
+
+  $("selectedDayTitle").textContent=`${first.day}, ${fmtDate(selectedDate)}`;
+  $("selectedDayHint").textContent=`${slots.length} pilihan kelas`;
+
+  const groups={
+    morning:slots.filter(s=>slotDaypart(s)==="morning"),
+    afternoon:slots.filter(s=>slotDaypart(s)==="afternoon"),
+    night:slots.filter(s=>slotDaypart(s)==="night")
+  };
+
+  function slotCard(s){
     const ended=slotHasEnded(s);
     const avail=availableStudents(s),capacity=capacityForSlot(s),approved=Math.min(capacity,approvedForSlot(s.id).length),pending=pendingApplicationsForSlot(s.id).length,active=activeApplicationsForSlot(s.id).length;
     const approvedFull=capacity===0||approved>=capacity;
@@ -466,8 +534,40 @@ function renderSlots(){
       : s.mode==="pksk"
         ? (full?"Mentor tambahan telah diisi":"1 mentor tambahan diperlukan")
         : `${avail.length} mentee masih tersedia untuk dipilih`;
-    return `<article class="slot ${ended?"ended":full?"full":"available"} ${s.mode==="pksk"?"pksk":""}"><div class="slot-head"><div><div class="time">${esc(s.time)}</div><div class="subject">${esc(s.subject)}</div><div class="group">${esc(s.group)}${s.mode==="pksk"?" • 2 mentee, 1 mentor tambahan":""}</div></div><span class="badge ${statusClass}">${statusText}</span></div>${s.topic?`<div class="topic"><b>Topik:</b> ${esc(s.topic)}</div>`:""}<div class="queue-status"><span class="queue-chip ${ended||queueFull?"closed":"open"}">${esc(queueText)}</span></div><div class="slot-footer"><small>${esc(footerText)}</small><button class="primary" ${canApply?"":"disabled"} onclick="openBooking('${s.id}')">${ended?"Sesi Selesai":full?"Slot Penuh":queueFull?"Had Permohonan":"Tempah"}</button></div></article>`
-  }).join("")
+
+    return `<article class="slot ${ended?"ended":full?"full":"available"} ${s.mode==="pksk"?"pksk":""}">
+      <div class="slot-head">
+        <div>
+          <div class="time">${esc(s.time)}</div>
+          <div class="subject">${esc(s.subject)}</div>
+          <div class="group">${esc(s.group)}${s.mode==="pksk"?" • 2 mentee, 1 mentor tambahan":""}</div>
+        </div>
+        <span class="badge ${statusClass}">${statusText}</span>
+      </div>
+      ${s.topic?`<div class="topic"><b>Topik:</b> ${esc(s.topic)}</div>`:""}
+      <div class="queue-status"><span class="queue-chip ${ended||queueFull?"closed":"open"}">${esc(queueText)}</span></div>
+      <div class="slot-footer">
+        <small>${esc(footerText)}</small>
+        <button class="primary" ${canApply?"":"disabled"} onclick="openBooking('${s.id}')">${ended?"Sesi Selesai":full?"Slot Penuh":queueFull?"Had Permohonan":"Tempah"}</button>
+      </div>
+    </article>`;
+  }
+
+  $("slotGrid").innerHTML=["morning","afternoon","night"].map(key=>{
+    const list=groups[key];
+    return `<section class="slot-daypart slot-daypart-${key}">
+      <div class="slot-daypart-head">
+        <div>
+          <span class="slot-daypart-kicker">${key==="morning"?"Pagi":key==="afternoon"?"Petang":"Malam"}</span>
+          <h3>${bookingDaypartLabel(key)}</h3>
+        </div>
+        <span class="mini-status">${list.length} slot</span>
+      </div>
+      ${list.length
+        ? `<div class="slot-group-grid">${list.map(slotCard).join("")}</div>`
+        : `<div class="slot-daypart-empty">Tiada slot ${key==="morning"?"pagi":key==="afternoon"?"petang":"malam"} untuk hari ini.</div>`}
+    </section>`;
+  }).join("");
 }
 function openBooking(id){
   if(!currentEmail||adminMode){alert("Sila log masuk sebagai Mentor.");return}

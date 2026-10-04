@@ -237,3 +237,75 @@ button{cursor:pointer}
 @media(max-width:520px){
   .schedule-mentee-availability .check-grid{grid-template-columns:1fr}
 }
+
+/* v12.7.5 Tempahan Kelas: today + morning/afternoon/night grouping */
+.day-btn.today:not(.active){border-color:#9bb7ce;background:#f4f9fd}
+.day-btn strong em{
+  display:inline-block;
+  margin-left:5px;
+  padding:2px 6px;
+  border-radius:999px;
+  background:#e5f5ec;
+  color:#177245;
+  font-size:8px;
+  font-style:normal;
+  line-height:1.4;
+  vertical-align:1px;
+}
+.day-btn.active strong em{background:rgba(255,255,255,.18);color:#fff}
+
+.slot-grid{
+  display:block;
+}
+.slot-daypart{
+  margin-top:18px;
+}
+.slot-daypart:first-child{margin-top:4px}
+.slot-daypart-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin:0 0 10px;
+  padding:10px 13px;
+  border-radius:14px;
+  background:#eef4f8;
+  border:1px solid #dbe6ee;
+}
+.slot-daypart-head h3{
+  margin:1px 0 0;
+  font-size:15px;
+  color:#203d59;
+  letter-spacing:.03em;
+}
+.slot-daypart-kicker{
+  display:block;
+  color:#6a7f91;
+  font-size:9px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.12em;
+}
+.slot-daypart-morning .slot-daypart-head{background:#f2f8fc}
+.slot-daypart-afternoon .slot-daypart-head{background:#f8f7f2}
+.slot-daypart-night .slot-daypart-head{background:#f1f4f8}
+.slot-group-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:12px;
+}
+.slot-daypart-empty{
+  border:1px dashed #cfdae3;
+  background:#fafcfd;
+  border-radius:14px;
+  padding:14px;
+  color:#758392;
+  font-size:11px;
+  text-align:center;
+}
+@media(max-width:1120px){
+  .slot-group-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:820px){
+  .slot-group-grid{grid-template-columns:1fr}
+}
