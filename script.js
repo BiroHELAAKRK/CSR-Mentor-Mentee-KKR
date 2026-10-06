@@ -147,7 +147,14 @@ let mentorServiceRecords = [];
 let mentorEvaluations = [];
 let recycleBin = [];
 let logisticsEntries = [];
+let faqMedia = [];
+let adminAuditLog = [];
 let adminLiveDate = "";
+let archiveVisibleCount = 25;
+let savingReport = false;
+let savingMaterial = false;
+let reportDraftTimer = null;
+let realtimeRefreshTimer = null;
 let emailSettings = loadWithFallback(KEYS.emailSettings,"helaa_rukaiyah_email_settings_v3",{enabled:false,adminEmail:"",webhookUrl:""});
 let emailLog = loadWithFallback(KEYS.emailLog,"helaa_rukaiyah_email_log_v3",[]);
 let SCHEDULE = (()=>{
@@ -190,7 +197,7 @@ function profileByEmail(email){return mentorProfiles.find(p=>String(p.email||"")
 function profileByMatric(matric){const key=String(matric||"").trim().toUpperCase();return key?mentorProfiles.find(p=>String(p.matric||"").trim().toUpperCase()===key):null}
 function currentMentorProfile(){return profileByMatric(currentMatric)||profileByEmail(currentEmail)||null}
 function isFinalStatus(b){return ["approved","reassigned"].includes(b.status)}
-function approvedForSlot(id){return bookings.filter(b=>b.slotId===id&&isFinalStatus(b))}
+function approvedForSlot(id){return bookings.filter(b=>b.slotId===id&&b.bookingRole!=="pksk_host"&&isFinalStatus(b))}
 function makeTicket(){return "HL-"+Date.now().toString(36).slice(-6).toUpperCase()}
 function wordCount(text){return String(text||"").trim()?String(text).trim().split(/\s+/).length:0}
 
@@ -298,6 +305,36 @@ function saveAll(){
 
 // ---------- File storage for sistem ----------
 function fileToDataUrl(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsDataURL(file)})}
+
+function blobToDataUrl(blob){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsDataURL(blob)})}
+function validateFiles(files,{maxMb=12,maxCount=12,types=null,label="Fail"}={}){
+  const arr=[...(files||[])];
+  if(arr.length>maxCount)throw new Error(`${label}: maksimum ${maxCount} fail sekali upload.`);
+  for(const f of arr){
+    if(f.size>maxMb*1024*1024)throw new Error(`${f.name} melebihi had ${maxMb} MB.`);
+    if(types&&types.length&&!types.some(t=>f.type===t||f.type.startsWith(t)||String(f.name).toLowerCase().endsWith(t)))throw new Error(`${f.name} mempunyai format yang tidak dibenarkan.`);
+  }
+  return arr;
+}
+function setButtonBusy(btn,busy,text="Sedang diproses..."){
+  if(!btn)return;
+  if(busy){btn.dataset.oldText=btn.textContent;btn.textContent=text;btn.disabled=true}
+  else{btn.textContent=btn.dataset.oldText||btn.textContent;btn.disabled=false;delete btn.dataset.oldText}
+}
+async function imageKeyToDataUrl(key){
+  try{const blob=await idbGet(key);return blob?await blobToDataUrl(blob):""}catch{return ""}
+}
+async function compressImageFile(file,{maxDimension=1600,quality=.82}={}){
+  if(!file?.type?.startsWith("image/")||file.size<1.2*1024*1024)return file;
+  try{
+    const url=URL.createObjectURL(file),img=new Image();
+    await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=url});
+    let w=img.naturalWidth,h=img.naturalHeight,scale=Math.min(1,maxDimension/Math.max(w,h));w=Math.max(1,Math.round(w*scale));h=Math.max(1,Math.round(h*scale));
+    const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);URL.revokeObjectURL(url);
+    const blob=await new Promise(res=>c.toBlob(res,"image/jpeg",quality));
+    return blob?new File([blob],file.name.replace(/\.[^.]+$/,".jpg"),{type:"image/jpeg",lastModified:Date.now()}):file;
+  }catch{return file}
+}
 function dataUrlToBlob(dataUrl){const [meta,data]=dataUrl.split(","),mime=(meta.match(/data:(.*?);/)||[])[1]||"application/octet-stream",bin=atob(data),arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);return new Blob([arr],{type:mime})}
 function openDB(){return new Promise((res,rej)=>{if(!window.indexedDB){rej(new Error("IndexedDB tidak tersedia"));return}const r=indexedDB.open(DB_NAME,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE)};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 async function idbPut(key,file){
@@ -312,13 +349,22 @@ async function openStoredFile(key,name){
   try{const blob=await idbGet(key);if(!blob){alert("Fail tidak ditemui pada peranti ini.");return}const url=URL.createObjectURL(blob);imageObjectUrls.push(url);window.open(url,"_blank","noopener,noreferrer")}
   catch(err){alert(err.message||"Fail tidak dapat dibuka.")}
 }
+let imageLazyObserver=null;
+function ensureImageLazyObserver(){
+  if(imageLazyObserver||!("IntersectionObserver" in window))return imageLazyObserver;
+  imageLazyObserver=new IntersectionObserver(entries=>entries.forEach(async e=>{
+    if(!e.isIntersecting)return;
+    const img=e.target;imageLazyObserver.unobserve(img);
+    const key=img.dataset.fileKey;if(!key||img.dataset.loaded==="1")return;
+    try{const blob=await idbGet(key);if(!blob)return;const url=URL.createObjectURL(blob);imageObjectUrls.push(url);img.src=url;img.dataset.loaded="1"}catch{}
+  }),{rootMargin:"250px"});
+  return imageLazyObserver;
+}
 async function hydrateStoredImages(root=document){
   const imgs=[...root.querySelectorAll("img[data-file-key]")];
-  await Promise.all(imgs.map(async img=>{
-    const key=img.dataset.fileKey;if(!key||img.dataset.loaded==="1")return;
-    const blob=await idbGet(key);if(!blob)return;
-    const url=URL.createObjectURL(blob);imageObjectUrls.push(url);img.src=url;img.dataset.loaded="1";
-  }));
+  const obs=ensureImageLazyObserver();
+  if(obs){imgs.forEach(img=>{if(img.dataset.loaded!=="1")obs.observe(img)});return}
+  await Promise.all(imgs.map(async img=>{const key=img.dataset.fileKey;if(!key||img.dataset.loaded==="1")return;const blob=await idbGet(key);if(!blob)return;const url=URL.createObjectURL(blob);imageObjectUrls.push(url);img.src=url;img.dataset.loaded="1"}))
 }
 async function previewSelectedImage(input,img){
   const f=input.files?.[0];if(!f)return;img.src=URL.createObjectURL(f)
@@ -400,6 +446,24 @@ function updateNotifCounts(){
   $("bellNotifCount").textContent=c;$("bellNotifCount").classList.toggle("hidden",!c)
 }
 
+
+function globalSearchItems(){
+  const items=[];
+  students.forEach(s=>items.push({type:"Mentee",title:s.name,meta:s.group,tab:"mentees"}));
+  mentorDirectoryEntries().forEach(x=>items.push({type:"Mentor",title:x.name,meta:x.matric,tab:"mentorDirectory",action:()=>openMentorDirectoryProfile(x.matric)}));
+  bookings.filter(b=>adminMode||String(b.email||"").toLowerCase()===currentEmail.toLowerCase()).forEach(b=>{const s=slotById(b.slotId);items.push({type:"Tempahan",title:`${b.ticket} • ${b.mentorName}`,meta:`${bookingStudentName(b)} • ${s?.subject||""} • ${s?.group||""}`,tab:adminMode?"admin":"mybooking",bookingId:b.id})});
+  reports.filter(r=>adminMode||r.status==="approved"||bookings.some(b=>b.id===r.bookingId&&String(b.email||"").toLowerCase()===currentEmail.toLowerCase())).forEach(r=>{const b=bookings.find(x=>x.id===r.bookingId);if(b)items.push({type:"Laporan",title:`${archiveReportNumber(r.id)} • ${bookingStudentName(b)}`,meta:b.mentorName,tab:r.status==="approved"?"approvedReports":"reports",reportId:r.id})});
+  return items;
+}
+function renderGlobalSearchResults(){
+  const input=$("globalSearchInput"),box=$("globalSearchResults");if(!input||!box)return;
+  const q=input.value.trim().toLowerCase();if(q.length<2){box.classList.add("hidden");box.innerHTML="";return}
+  const results=globalSearchItems().filter(x=>`${x.type} ${x.title} ${x.meta}`.toLowerCase().includes(q)).slice(0,12);
+  box.innerHTML=results.length?results.map((x,i)=>`<button type="button" onclick="openGlobalSearchResult(${i})"><b>${esc(x.title)}</b><span>${esc(x.type)} • ${esc(x.meta||"")}</span></button>`).join(""):'<div class="empty compact">Tiada padanan.</div>';
+  box._results=results;box.classList.remove("hidden");
+}
+function openGlobalSearchResult(i){const box=$("globalSearchResults"),x=box?._results?.[i];if(!x)return;box.classList.add("hidden");$("globalSearchInput").value="";if(x.action){switchTab(x.tab);setTimeout(x.action,60);return}if(x.bookingId&&adminMode){switchTab("admin");switchAdminPane("bookings");notificationFocusBookingId=x.bookingId;renderAdminBookings();setTimeout(()=>document.getElementById(`admin-booking-${x.bookingId}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80);return}switchTab(x.tab);if(x.reportId&&x.tab==="approvedReports")setTimeout(()=>openArchiveReport(x.reportId),80)}
+
 // ---------- Login and navigation ----------
 function setLoginMode(mode){
   $("mentorLoginTab").classList.toggle("active",mode==="mentor");$("adminLoginTab").classList.toggle("active",mode==="admin");
@@ -450,6 +514,7 @@ function switchTab(id){
   if(id==="classArchive")renderClassArchive();
   if(id==="mentorRecognition")renderAdminMentorLive();
   if(id==="logistics")renderLogisticsPage();
+  if(id==="faq")renderFaqMedia();
   if(id==="recycleBin")renderRecycleBin();
   if(id==="mentees")renderMentees();
   if(id==="mentorProfile")renderMentorProfile();
@@ -481,6 +546,7 @@ function switchAdminPane(id){
   if(id==="adminMentorLive")renderAdminMentorLive();
   if(id==="adminNotifications")renderNotifications();
   if(id==="adminEmailSettings")renderEmailSettings();
+  if(id==="adminAuditLog")renderAdminAuditLog();
 }
 
 // ---------- Student helpers ----------
@@ -488,8 +554,8 @@ function studentsInGroup(group){return students.filter(s=>s.group===group)}
 function slotExcludedMenteeIds(slot){return new Set((slot?.excludedMenteeIds||[]).map(String))}
 function eligibleStudentsForSlot(slot){if(!slot)return[];if(slot.mode==="pksk")return studentsInGroup(slot.group);const excluded=slotExcludedMenteeIds(slot);return studentsInGroup(slot.group).filter(s=>!excluded.has(String(s.id)))}
 function capacityForSlot(s){return s?.mode==="pksk"?1:eligibleStudentsForSlot(s).length}
-function activeApplicationsForSlot(slotId){return bookings.filter(b=>b.slotId===slotId&&["pending","approved","reassigned"].includes(b.status))}
-function pendingApplicationsForSlot(slotId){return bookings.filter(b=>b.slotId===slotId&&b.status==="pending")}
+function activeApplicationsForSlot(slotId){return bookings.filter(b=>b.slotId===slotId&&b.bookingRole!=="pksk_host"&&["pending","approved","reassigned"].includes(b.status))}
+function pendingApplicationsForSlot(slotId){return bookings.filter(b=>b.slotId===slotId&&b.bookingRole!=="pksk_host"&&b.status==="pending")}
 function bookingStudentId(b){return b.assignedStudentId||b.requestedStudentId||""}
 function bookingStudentName(b){const s=studentById(bookingStudentId(b));return s?.name||b.assignedStudent||b.requestedStudentName||b.requestedStudent||"-"}
 function availableStudents(slot,excludeBookingId=""){
@@ -637,20 +703,92 @@ function bookingWaitingAge(iso){
   const hrs=Math.floor(mins/60);if(hrs<24)return`${hrs} jam ${mins%60?`${mins%60} minit`:""}`.trim();
   const days=Math.floor(hrs/24);return`${days} hari ${hrs%24?`${hrs%24} jam`:""}`.trim();
 }
+
+function adminTargetOccurrenceConflicts(slotId,studentId,excludeBookingId=""){
+  const target=slotById(slotId);
+  if(!target||!studentId)return [];
+  return bookings.filter(b=>{
+    if(b.id===excludeBookingId||!["pending","approved","reassigned"].includes(b.status))return false;
+    if(String(bookingStudentId(b)||"")!==String(studentId))return false;
+    const s=slotById(b.slotId);
+    return !!s&&s.date===target.date&&s.time===target.time;
+  });
+}
+function adminBookingConflictInfo(b){
+  if(!b||!["pending","approved","reassigned"].includes(b.status))return null;
+  const sid=bookingStudentId(b),slot=slotById(b.slotId);
+  if(!sid||!slot)return null;
+  const others=adminTargetOccurrenceConflicts(b.slotId,sid,b.id);
+  return others.length?{studentName:bookingStudentName(b),others,slot}:null;
+}
+function adminReassignGroups(){
+  return [...new Set(STUDENTS.map(s=>s.group).filter(Boolean))]
+    .sort((a,b)=>educationGroupRank(a)-educationGroupRank(b)||String(a).localeCompare(String(b),"ms"));
+}
+function adminReassignSlotsForGroup(group,booking){
+  const current=slotById(booking?.slotId);
+  return SCHEDULE.filter(s=>s.group===group&&s.mode!=="pksk")
+    .sort((a,b)=>{
+      const ad=current&&a.date===current.date?0:1,bd=current&&b.date===current.date?0:1;if(ad!==bd)return ad-bd;
+      const at=current&&a.time===current.time?0:1,bt=current&&b.time===current.time?0:1;if(at!==bt)return at-bt;
+      return String(a.date).localeCompare(String(b.date))||slotStartMinutes(a)-slotStartMinutes(b)||String(a.subject||"").localeCompare(String(b.subject||""),"ms");
+    });
+}
+function renderAdminReassignSlots(){
+  const b=bookings.find(x=>x.id===activeReassignId);if(!b)return;
+  const group=$("reassignGroup").value,current=slotById(b.slotId),slots=adminReassignSlotsForGroup(group,b);
+  $("reassignSlot").innerHTML=slots.length?slots.map(s=>{
+    const recommended=current&&s.date===current.date&&s.time===current.time;
+    return `<option value="${esc(s.id)}">${recommended?"★ ":""}${esc(s.day)} ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.subject)}${recommended?" • masa sama":""}</option>`;
+  }).join(""):'<option value="">Tiada slot untuk kumpulan ini</option>';
+  renderAdminReassignStudents();
+}
+function renderAdminReassignStudents(){
+  const b=bookings.find(x=>x.id===activeReassignId);if(!b)return;
+  const group=$("reassignGroup").value,slotId=$("reassignSlot").value,list=studentsInGroup(group).sort((a,b)=>String(a.name).localeCompare(String(b.name),"ms"));
+  $("reassignStudent").innerHTML=list.length?list.map(st=>{
+    const conflicts=slotId?adminTargetOccurrenceConflicts(slotId,st.id,b.id):[];
+    const current=String(bookingStudentId(b)||"")===String(st.id);
+    const note=current?" • SEMASA":conflicts.length?` • ⚠ ADA ${conflicts.length} MENTOR`:"";
+    return `<option value="${esc(st.id)}">${esc(st.name)}${note}</option>`;
+  }).join(""):'<option value="">Tiada mentee aktif dalam kumpulan ini</option>';
+  const currentId=bookingStudentId(b);if(currentId&&list.some(s=>String(s.id)===String(currentId)))$("reassignStudent").value=currentId;
+  renderAdminReassignConflict();
+}
+function renderAdminReassignConflict(){
+  const b=bookings.find(x=>x.id===activeReassignId),box=$("reassignConflictWarning");if(!b||!box)return;
+  const slotId=$("reassignSlot").value,studentId=$("reassignStudent").value;if(!slotId||!studentId){box.classList.add("hidden");box.innerHTML="";return}
+  const target=slotById(slotId),st=studentById(studentId),conflicts=adminTargetOccurrenceConflicts(slotId,studentId,b.id),activeInSlot=activeApplicationsForSlot(slotId).filter(x=>x.id!==b.id),capacity=capacityForSlot(target);
+  let messages=[];
+  if(conflicts.length)messages.push(`<b>KONFLIK SEMENTARA:</b> ${esc(st?.name||"Mentee")} sedang mempunyai ${conflicts.length} mentor lain pada ${esc(target?.day||"")}, ${target?.date?fmtDate(target.date):""} • ${esc(target?.time||"")}: ${conflicts.map(x=>esc(x.mentorName||x.mentorMatric||"Mentor")).join(", ")}. Anda boleh teruskan untuk tujuan swap, tetapi susun semula tempahan satu lagi selepas ini.`);
+  if(capacity&&activeInSlot.length>=capacity)messages.push(`<b>Kapasiti slot sedang penuh.</b> Pentadbir masih boleh membuat override sementara untuk menyelesaikan pertukaran mentor-mentee.`);
+  if(b.consent!=="yes")messages.push(`<b>Nota:</b> Mentor asal tidak menandakan persetujuan pertukaran mentee. Pentadbir sedang menggunakan kuasa override atas keperluan operasi.`);
+  if(messages.length){box.innerHTML=messages.join("<br><br>");box.classList.remove("hidden")}else{box.classList.add("hidden");box.innerHTML=""}
+}
+
+
+function fillAdminBookingFilters(){
+  const g=$("adminBookingGroupFilter"),sub=$("adminBookingSubjectFilter");
+  if(g&&g.options.length<=1)g.innerHTML='<option value="all">Semua Tahun/Tingkatan</option>'+GROUP_ORDER.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("");
+  if(sub&&sub.options.length<=1){const ss=[...new Set(SCHEDULE.map(s=>s.subject).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ms"));sub.innerHTML='<option value="all">Semua Subjek</option>'+ss.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("")}
+}
+function resetAdminBookingFilters(){["adminBookingDateFilter","adminSearch"].forEach(id=>{if($(id))$(id).value=""});["statusFilter","adminBookingGroupFilter","adminBookingSubjectFilter"].forEach(id=>{if($(id))$(id).value="all"});renderAdminBookings()}
 function renderAdminBookings(){
-  if(!adminMode)return;
-  const filter=$("statusFilter").value,q=$("adminSearch").value.trim().toLowerCase();
-  const list=bookings.filter(b=>(filter==="all"||b.status===filter)&&(!q||[b.mentorName,b.email,b.mentorMatric,b.requestedStudentName,b.requestedStudent,bookingStudentName(b),b.ticket].some(x=>String(x||"").toLowerCase().includes(q)))).sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  if(!adminMode)return;fillAdminBookingFilters();
+  const filter=$("statusFilter").value,q=$("adminSearch").value.trim().toLowerCase(),date=$("adminBookingDateFilter")?.value||"",group=$("adminBookingGroupFilter")?.value||"all",subject=$("adminBookingSubjectFilter")?.value||"all";
+  const list=bookings.filter(b=>{const s=slotById(b.slotId);return(filter==="all"||b.status===filter)&&(!date||s?.date===date)&&(group==="all"||s?.group===group)&&(subject==="all"||s?.subject===subject)&&(!q||[b.mentorName,b.email,b.mentorMatric,b.requestedStudentName,b.requestedStudent,bookingStudentName(b),b.ticket].some(x=>String(x||"").toLowerCase().includes(q)))}).sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
   $("adminBookingList").innerHTML=list.length?list.map(b=>{
     const s=slotById(b.slotId),open=activeReviewBookingId===b.id,focus=notificationFocusBookingId===b.id;
     const canReassign=b.consent==="yes";
     let actions="";
-    if(b.status==="pending")actions=`<button class="primary" onclick="approveBooking('${b.id}')">Luluskan</button><button class="secondary" onclick="openReassign('${b.id}')" ${canReassign?"":'disabled title="Mentor tidak bersetuju untuk pertukaran mentee"'}>Tukar / Atur Mentee</button><button class="danger" onclick="rejectBooking('${b.id}')">Tolak Permohonan</button><button class="danger" onclick="adminWithdrawBooking('${b.id}')">Tarik Diri Bagi Pihak Mentor</button>`;
-    else if(isFinalStatus(b))actions=`<button class="secondary" onclick="openReassign('${b.id}')" ${canReassign?"":'disabled title="Mentor tidak bersetuju untuk pertukaran mentee"'}>Tukar Mentee</button><button class="danger" onclick="revertBooking('${b.id}')">Buka Semula</button><button class="danger" onclick="adminWithdrawBooking('${b.id}')">Tarik Diri Bagi Pihak Mentor</button>`;
+    if(b.status==="pending")actions=`<button class="primary" onclick="approveBooking('${b.id}')">Luluskan</button><button class="secondary" onclick="openReassign('${b.id}')">Tukar / Susun Semula</button><button class="danger" onclick="rejectBooking('${b.id}')">Tolak Permohonan</button><button class="danger" onclick="adminWithdrawBooking('${b.id}')">Tarik Diri Bagi Pihak Mentor</button>`;
+    else if(isFinalStatus(b))actions=`<button class="secondary" onclick="openReassign('${b.id}')">Tukar / Susun Semula</button><button class="danger" onclick="revertBooking('${b.id}')">Buka Semula</button><button class="danger" onclick="adminWithdrawBooking('${b.id}')">Tarik Diri Bagi Pihak Mentor</button>`;
     else if(["rejected","reverted"].includes(b.status))actions=`<button class="secondary" onclick="restorePending('${b.id}')">Kembalikan ke Menunggu</button>`;
     else if(b.status==="cancelled")actions=`<span class="meta">Slot telah dibuka semula untuk mentor lain.</span>`;
     const requestedUnavailable=!!(s&&b.requestedStudentId&&b.requestedStudentId!=="pksk-pair"&&slotExcludedMenteeIds(s).has(String(b.requestedStudentId)));
-    return `<div id="admin-booking-${b.id}" class="card admin-booking-card ${open?"review-open":""} ${focus?"notification-focus":""}"><div class="card-top"><div><h4>${esc(b.mentorName)} • <span class="ticket">${esc(b.ticket)}</span></h4><div class="meta">${esc(b.email)} • Matrik: <b>${esc(b.mentorMatric||"-")}</b><br>${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.subject)} • ${esc(s.group)}`:""}</div>${b.createdAt?`<div class="booking-age">Dihantar: ${fmtDateTime(b.createdAt)}${b.status==="pending"?` • Menunggu ${bookingWaitingAge(b.createdAt)}`:""}</div>`:""}</div>${badge(b.status)}</div>${requestedUnavailable?'<div class="slot-unavailable-warning">Mentee yang diminta telah ditandakan tidak hadir / tidak tersedia untuk slot ini. Sila atur mentee lain atau tolak permohonan.</div>':""}<div class="actions review-entry-actions"><button class="primary" type="button" onclick="toggleBookingReview('${b.id}')">${open?"Tutup Semakan":"Semak"}</button></div>${open?`<div class="booking-review-panel"><div class="kv"><b>Mentee diminta</b><span>${esc(b.requestedStudentName||b.requestedStudent||"-")}</span><b>Mentee ditugaskan</b><span>${esc(bookingStudentName(b))}</span><b>Benar pengaturan lain</b><span>${canReassign?"Ya":"Tidak"}</span><b>Catatan mentor</b><span>${esc(b.mentorNote||"-")}</span><b>Catatan Pentadbir</b><span>${esc(b.adminNote||"-")}</span>${b.status==="cancelled"?`<b>Tarik diri / batal oleh</b><span>${b.withdrawnBy==="admin"?"Pentadbir":"Mentor"}</span><b>Sebab</b><span>${esc(b.withdrawalReason||"Tidak dinyatakan")}</span><b>Masa</b><span>${b.withdrawnAt?fmtDateTime(b.withdrawnAt):"-"}</span>`:""}</div>${!canReassign&&b.status==="pending"?'<div class="notice warn compact-notice">Mentor tidak bersetuju untuk ditukarkan kepada mentee lain. Pentadbir hanya boleh meluluskan mentee asal atau menolak permohonan.</div>':""}<div class="actions">${actions}<button class="ghost" onclick="adminEditBooking('${b.id}')">Sunting Rekod</button><button class="danger" onclick="deleteBookingRecord('${b.id}')">Padam Rekod</button></div></div>`:""}</div>`
+    const conflict=adminBookingConflictInfo(b);
+    const conflictBanner=conflict?`<div class="admin-assignment-conflict"><b>⚠ Konflik mentor-mentee:</b> ${esc(conflict.studentName)} mempunyai lebih daripada seorang mentor pada ${esc(conflict.slot.day)}, ${fmtDate(conflict.slot.date)} • ${esc(conflict.slot.time)}. Susun semula salah satu tempahan.</div>`:"";
+    return `<div id="admin-booking-${b.id}" class="card admin-booking-card ${open?"review-open":""} ${focus?"notification-focus":""}">${conflictBanner}<div class="card-top"><div><h4>${esc(b.mentorName)} • <span class="ticket">${esc(b.ticket)}</span></h4><div class="meta">${esc(b.email)} • Matrik: <b>${esc(b.mentorMatric||"-")}</b><br>${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.subject)} • ${esc(s.group)}`:""}</div>${b.createdAt?`<div class="booking-age">Dihantar: ${fmtDateTime(b.createdAt)}${b.status==="pending"?` • Menunggu ${bookingWaitingAge(b.createdAt)}`:""}</div>`:""}</div>${badge(b.status)}</div>${requestedUnavailable?'<div class="slot-unavailable-warning">Mentee yang diminta telah ditandakan tidak hadir / tidak tersedia untuk slot ini. Sila atur mentee lain atau tolak permohonan.</div>':""}<div class="actions review-entry-actions"><button class="primary" type="button" onclick="toggleBookingReview('${b.id}')">${open?"Tutup Semakan":"Semak"}</button></div>${open?`<div class="booking-review-panel"><div class="kv"><b>Mentee diminta</b><span>${esc(b.requestedStudentName||b.requestedStudent||"-")}</span><b>Mentee ditugaskan</b><span>${esc(bookingStudentName(b))}</span><b>Benar pengaturan lain</b><span>${canReassign?"Ya":"Tidak"}</span><b>Catatan mentor</b><span>${esc(b.mentorNote||"-")}</span><b>Catatan Pentadbir</b><span>${esc(b.adminNote||"-")}</span>${b.status==="cancelled"?`<b>Tarik diri / batal oleh</b><span>${b.withdrawnBy==="admin"?"Pentadbir":"Mentor"}</span><b>Sebab</b><span>${esc(b.withdrawalReason||"Tidak dinyatakan")}</span><b>Masa</b><span>${b.withdrawnAt?fmtDateTime(b.withdrawnAt):"-"}</span>`:""}</div>${!canReassign?'<div class="notice warn compact-notice">Mentor tidak menandakan persetujuan pertukaran mentee. Pentadbir masih boleh menggunakan fungsi Susun Semula jika diperlukan atas urusan operasi.</div>':""}<div class="actions">${actions}<button class="ghost" onclick="adminEditBooking('${b.id}')">Sunting Rekod</button><button class="danger" onclick="deleteBookingRecord('${b.id}')">Padam Rekod</button></div></div>`:""}</div>`
   }).join(""):'<div class="empty">Tiada tempahan dalam kategori ini.</div>';
   updateStats();
   if(notificationFocusBookingId)setTimeout(()=>{notificationFocusBookingId=null},300)
@@ -661,15 +799,27 @@ function approveBooking(id){
   b.assignedStudentId=b.requestedStudentId;b.assignedStudent=b.requestedStudentName||b.requestedStudent;b.status="approved";b.updatedAt=new Date().toISOString();saveAll();notify(b.email,`Tempahan ${b.ticket} telah DILULUSKAN. Mentee: ${bookingStudentName(b)}.`,"success","booking_approved",{bookingId:b.id,ticket:b.ticket,kind:"booking"});renderAll()
 }
 function openReassign(id){
-  const b=bookings.find(x=>x.id===id),s=slotById(b.slotId);if(!b||!s)return;if(b.consent!=="yes"){alert("Mentor tidak bersetuju untuk diaturkan mentee lain.");return}
-  const avail=availableStudents(s,id);if(!avail.length){alert("Tiada mentee lain tersedia untuk slot ini.");return}
-  activeReassignId=id;$("reassignSummary").innerHTML=`<b>${esc(b.mentorName)}</b> • ${esc(b.mentorMatric||"-")}<br>${s.day}, ${fmtDate(s.date)} • ${esc(s.subject)} • ${esc(s.group)}<br>Pilihan asal: <b>${esc(b.requestedStudentName||b.requestedStudent||"-")}</b>`;
-  $("reassignStudent").innerHTML=avail.map(st=>`<option value="${st.id}">${esc(st.name)}</option>`).join("");$("reassignNote").value="";$("reassignModal").classList.add("open")
+  if(!adminMode)return;
+  const b=bookings.find(x=>x.id===id),s=slotById(b?.slotId);if(!b||!s)return;
+  if(reports.some(r=>r.bookingId===id)){alert("Tempahan ini sudah mempunyai laporan. Demi menjaga rekod laporan, pengaturan mentor-mentee tidak boleh diubah selepas laporan diwujudkan.");return}
+  activeReassignId=id;
+  const assigned=bookingStudentName(b);
+  $("reassignSummary").innerHTML=`<b>${esc(b.mentorName)}</b> • ${esc(b.mentorMatric||"-")}<br>${esc(s.day)}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.subject)} • ${esc(s.group)}<br>Mentee diminta: <b>${esc(b.requestedStudentName||b.requestedStudent||"-")}</b><br>Mentee semasa: <b>${esc(assigned||"-")}</b>${b.consent!=="yes"?'<br><span class="warn-text">Mentor tidak menandakan persetujuan pertukaran. Pentadbir boleh override jika perlu.</span>':""}`;
+  const groups=adminReassignGroups();
+  $("reassignGroup").innerHTML=groups.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join("");
+  const currentAssignedId=bookingStudentId(b),currentStudent=currentAssignedId?studentById(currentAssignedId):null;
+  $("reassignGroup").value=currentStudent?.group||s.group||groups[0]||"";
+  $("reassignNote").value=b.adminNote||"";
+  renderAdminReassignSlots();
+  $("reassignModal").classList.add("open")
 }
 function confirmReassign(){
-  const b=bookings.find(x=>x.id===activeReassignId),s=slotById(b?.slotId),sid=$("reassignStudent").value,st=sid==="pksk-pair"?{id:sid,name:"Ariana + Fathemah"}:studentById(sid);if(!b||!s||!st)return;
-  if(!availableStudents(s,b.id).some(x=>x.id===sid)){alert("Mentee ini tidak lagi tersedia.");return}
-  b.assignedStudentId=st.id;b.assignedStudent=st.name;b.status="reassigned";b.adminNote=$("reassignNote").value.trim();b.updatedAt=new Date().toISOString();saveAll();closeModal("reassignModal");notify(b.email,`Tempahan ${b.ticket} telah diluluskan dengan pengaturan mentee: ${st.name}.${b.adminNote?` Catatan: ${b.adminNote}`:""}`,"success","booking_reassigned",{bookingId:b.id,ticket:b.ticket,kind:"booking"});renderAll()
+  const b=bookings.find(x=>x.id===activeReassignId),targetSlot=slotById($("reassignSlot").value),st=studentById($("reassignStudent").value);if(!b||!targetSlot||!st)return;
+  const conflicts=adminTargetOccurrenceConflicts(targetSlot.id,st.id,b.id);
+  if(conflicts.length&&!confirm(`${st.name} sedang mempunyai ${conflicts.length} mentor lain pada masa yang sama. Teruskan override sementara?`))return;
+  b.slotId=targetSlot.id;b.assignedStudentId=st.id;b.assignedStudent=st.name;b.status="reassigned";b.adminNote=$("reassignNote").value.trim();b.updatedAt=new Date().toISOString();saveAll();closeModal("reassignModal");
+  notify(b.email,`Tempahan ${b.ticket} telah disusun semula oleh Pentadbir. Mentee: ${st.name}. Slot: ${targetSlot.day}, ${fmtDate(targetSlot.date)} • ${targetSlot.time}.${b.adminNote?` Catatan: ${b.adminNote}`:""}`,"success","booking_reassigned",{bookingId:b.id,ticket:b.ticket,kind:"booking"});
+  if(conflicts.length)notify("*admin*",`PERINGATAN KONFLIK: ${st.name} mempunyai lebih daripada seorang mentor pada ${targetSlot.day}, ${fmtDate(targetSlot.date)} • ${targetSlot.time}. Sila susun semula salah satu tempahan.`,"warn","booking_conflict",{bookingId:b.id,ticket:b.ticket,kind:"booking"});renderAll()
 }
 function rejectBooking(id){const b=bookings.find(x=>x.id===id);const n=prompt("Sebab tempahan tidak diluluskan:","");if(!b||n===null)return;b.status="rejected";b.adminNote=n;b.assignedStudentId="";b.assignedStudent="";b.updatedAt=new Date().toISOString();saveAll();notify(b.email,`Tempahan ${b.ticket} tidak diluluskan.${n?` Catatan: ${n}`:""}`,"warn","booking_rejected",{bookingId:b.id,ticket:b.ticket,kind:"booking"});renderAll()}
 function revertBooking(id){const b=bookings.find(x=>x.id===id);if(!b||!confirm("Buka semula tempahan ini? Mentee akan tersedia kepada mentor lain."))return;b.status="reverted";b.assignedStudentId="";b.assignedStudent="";b.updatedAt=new Date().toISOString();saveAll();notify(b.email,`Kelulusan tempahan ${b.ticket} telah dibuka semula oleh Pentadbir.`,"warn","booking_reverted",{bookingId:b.id,ticket:b.ticket,kind:"booking"});renderAll()}
@@ -696,8 +846,18 @@ function buildProfileCheckboxes(){
 }
 function toggleOtherSubject(){const checked=[...document.querySelectorAll('input[name="mentorSubject"]:checked')].some(x=>x.value==="Lain-lain");$("otherSubjectWrap").classList.toggle("hidden",!checked)}
 function updateAboutWordCount(){const n=wordCount($("mentorProfileAbout").value);$("aboutWordCount").textContent=n;$("aboutWordCount").parentElement.classList.toggle("over",n>50)}
+
+function mentorProfileCompleteness(p){
+  if(!p)return 0;
+  const checks=[p.fullName,p.matric,p.faculty,p.course,p.about,p.photoKey,(p.subjects||[]).length,(p.levels||[]).length];
+  return Math.round(checks.filter(Boolean).length/checks.length*100);
+}
+function renderMentorProfileCompleteness(p=currentMentorProfile()){
+  const el=$("mentorProfileCompleteness");if(!el)return;const pct=mentorProfileCompleteness(p);
+  el.innerHTML=`<div class="profile-completeness-head"><b>Profil ${pct}% lengkap</b><span>${pct>=100?"Lengkap":"Lengkapkan maklumat untuk dokumentasi program"}</span></div><div class="profile-completeness-bar"><i style="width:${pct}%"></i></div>`;
+}
 function renderMentorProfile(){
-  const p=currentMentorProfile();$("mentorProfileName").value=p?.fullName||"";$("mentorProfileMatric").value=p?.matric||currentMatric;$("mentorProfileFaculty").value=p?.faculty||"";$("mentorProfileCourse").value=p?.course||"";$("mentorProfilePhone").value=p?.phone||"";$("mentorProfileStrength").value=p?.strength||"";$("mentorProfileAbout").value=p?.about||"";$("otherSubjectText").value=p?.otherSubject||"";
+  const p=currentMentorProfile();renderMentorProfileCompleteness(p);$("mentorProfileName").value=p?.fullName||"";$("mentorProfileMatric").value=p?.matric||currentMatric;$("mentorProfileFaculty").value=p?.faculty||"";$("mentorProfileCourse").value=p?.course||"";$("mentorProfilePhone").value=p?.phone||"";$("mentorProfileStrength").value=p?.strength||"";$("mentorProfileAbout").value=p?.about||"";$("otherSubjectText").value=p?.otherSubject||"";
   if($("mentorProfilePublicConsent"))$("mentorProfilePublicConsent").checked=!!p?.publicConsent;
   document.querySelectorAll('input[name="mentorSubject"]').forEach(cb=>cb.checked=(p?.subjects||[]).includes(cb.value));document.querySelectorAll('input[name="mentorLevel"]').forEach(cb=>cb.checked=(p?.levels||[]).includes(cb.value));toggleOtherSubject();updateAboutWordCount();
   const img=$("mentorProfilePhotoPreview");img.removeAttribute("src");img.dataset.loaded="0";if(p?.photoKey)img.dataset.fileKey=p.photoKey;else delete img.dataset.fileKey;hydrateStoredImages($("mentorProfile"))
@@ -818,10 +978,9 @@ function openMentorDirectoryProfile(matric){
 
   $("mentorDirectoryPopupName").textContent=x.name;
   const editNameBtn=$("mentorDirectoryEditNameBtn");
-  if(editNameBtn){
-    editNameBtn.classList.toggle("hidden",!adminMode);
-    editNameBtn.onclick=adminMode?()=>adminEditMentorName(x.matric):null;
-  }
+  if(editNameBtn){editNameBtn.classList.toggle("hidden",!adminMode);editNameBtn.onclick=adminMode?()=>adminEditMentorName(x.matric):null}
+  const printProfileBtn=$("mentorDirectoryPrintBtn");
+  if(printProfileBtn){printProfileBtn.classList.toggle("hidden",!adminMode);printProfileBtn.onclick=adminMode?()=>printMentorProfile(x.matric):null}
   $("mentorDirectoryPopupContent").innerHTML=`
     <div class="mentor-popup-layout">
       <div class="mentor-popup-photo">
@@ -868,6 +1027,14 @@ async function adminEditMentorName(matric){
   alert("Nama mentor berjaya dikemas kini dan diselaraskan pada profil, tempahan, laporan, Arkib Kelas dan rekod berkaitan.");
 }
 
+
+async function printMentorProfile(matric){
+  if(!adminMode){alert("Akses Pentadbir diperlukan.");return}
+  const p=profileByMatric(matric);if(!p){alert("Profil mentor tidak ditemui.");return}
+  const rows=mentorServiceRowsForMatric(matric,{allStatuses:true});const photo=p.photoKey?await imageKeyToDataUrl(p.photoKey):"";
+  const html=`<!doctype html><html lang="ms"><head><meta charset="utf-8"><title>Profil Mentor - ${esc(p.fullName||p.matric)}</title><style>body{font-family:Arial;color:#1f2d3d;margin:0}.page{max-width:820px;margin:auto;padding:28px}.head{border-bottom:3px solid #315b7d;padding-bottom:14px;display:flex;gap:18px;align-items:center}.photo{width:110px;height:110px;border-radius:14px;object-fit:cover;border:1px solid #d8e1e8}.ph{width:110px;height:110px;border-radius:14px;background:#eef4f8;display:grid;place-items:center;color:#667085}.brand{font-size:11px;font-weight:bold;color:#315b7d;text-transform:uppercase;letter-spacing:.08em}h1{margin:5px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.box{border:1px solid #d8e1e8;border-radius:10px;padding:10px}.box small{display:block;color:#667085;font-weight:bold;text-transform:uppercase;font-size:9px;margin-bottom:4px}.section{margin-top:18px}.tags{display:flex;flex-wrap:wrap;gap:6px}.tag{border:1px solid #d8e1e8;background:#f7fafc;border-radius:999px;padding:5px 8px;font-size:10px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d8e1e8;padding:8px;font-size:10px;text-align:left}th{background:#eef4f8}@media print{@page{size:A4;margin:14mm}.page{padding:0}}</style></head><body><div class="page"><div class="head">${photo?`<img class="photo" src="${photo}">`:'<div class="ph">Tiada gambar</div>'}<div><div class="brand">HELAA KRK • Sistem Mentor-Mentee Rukaiyah</div><h1>${esc(p.fullName||"Mentor")}</h1><div>${esc(p.matric||"-")} • ${esc(p.faculty||"-")} • ${esc(p.course||"-")}</div></div></div><div class="grid"><div class="box"><small>E-mel</small>${esc(p.email||"-")}</div><div class="box"><small>No. Telefon</small>${esc(p.phone||"belum dinyatakan")}</div><div class="box"><small>Kekuatan Mengajar</small>${esc(p.strength||"-")}</div><div class="box"><small>Kelengkapan Profil</small>${mentorProfileCompleteness(p)}%</div></div><div class="section"><h3>Tentang Mentor</h3><p>${esc(p.about||"-")}</p></div><div class="section"><h3>Subjek</h3><div class="tags">${(p.subjects||[]).map(x=>`<span class="tag">${esc(x)}</span>`).join("")||"-"}</div></div><div class="section"><h3>Tahap Pengajaran</h3><div class="tags">${(p.levels||[]).map(x=>`<span class="tag">${esc(x)}</span>`).join("")||"-"}</div></div><div class="section"><h3>Rekod Mentor-Mentee (${rows.length})</h3><table><thead><tr><th>Tarikh</th><th>Mentee</th><th>Subjek</th><th>Tahun/Tingkatan</th><th>Status</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.classDate?esc(fmtDate(r.classDate)):"-"}</td><td>${esc(r.menteeName||"-")}</td><td>${esc(r.subject||"-")}</td><td>${esc(r.group||"-")}</td><td>${esc(serviceStatusLabel(r.bookingStatus))}</td></tr>`).join("")||'<tr><td colspan="5">Tiada rekod</td></tr>'}</tbody></table></div></div></body></html>`;
+  printHtmlDocument(html);
+}
 // ---------- Mentee profiles ----------
 function menteeCard(st,admin=false){return `<article class="mentee-card"><img class="profile-photo" ${st.photoKey?`data-file-key="${esc(st.photoKey)}"`:""} alt="${esc(st.name)}"><h4>${esc(st.name)}</h4><div class="meta">${esc(st.group)}</div><p>${esc(st.summary||"Maklumat ringkas belum ditambah oleh Pentadbir.")}</p>${admin?`<div class="actions"><button class="secondary" type="button" onclick="openMenteeEdit('${st.id}')">Edit Profil</button><button class="danger" type="button" onclick="deleteMentee('${st.id}')">Padam</button></div>`:""}</article>`}
 function renderMentees(){
@@ -924,20 +1091,61 @@ function deleteMentee(id){
   if(!adminMode)return;const s=studentById(id);if(!s)return;const used=bookings.filter(b=>[b.requestedStudentId,b.assignedStudentId].includes(id));if(used.length){alert(`Mentee ini mempunyai ${used.length} rekod tempahan. Untuk menjaga rekod, padam atau ubah rekod tempahan berkaitan dahulu.`);return}if(!confirm(`Padam mentee ${s.name} daripada sistem?`))return;students=students.filter(x=>x.id!==id);saveAll();renderMentees();renderAdminMentees();renderSlots();alert("Mentee telah dipadam.")
 }
 
+
+function printHtmlDocument(html){
+  const oldFrame=document.getElementById("helaaPrintFrame");if(oldFrame)oldFrame.remove();
+  const frame=document.createElement("iframe");frame.id="helaaPrintFrame";frame.setAttribute("aria-hidden","true");Object.assign(frame.style,{position:"fixed",right:"0",bottom:"0",width:"1px",height:"1px",border:"0",opacity:"0",pointerEvents:"none"});document.body.appendChild(frame);
+  const doc=frame.contentWindow.document;doc.open();doc.write(html);doc.close();let printed=false;
+  const go=()=>{if(printed)return;printed=true;try{frame.contentWindow.focus();frame.contentWindow.print()}catch(e){alert("Paparan cetak tidak dapat dibuka. Sila cuba sekali lagi.")}setTimeout(()=>frame.remove(),5000)};
+  frame.onload=()=>setTimeout(go,350);setTimeout(go,1000);
+}
 // ---------- Reports ----------
 function renderRatingQuestions(){
   $("ratingQuestions").innerHTML=RATING_LABELS.map((q,i)=>`<div class="rating-label">${i+1}. ${esc(q)}</div><div class="stars">${[1,2,3,4,5].map(v=>`<button type="button" class="star ${reportRatings[i]>=v?"on":""}" onclick="setRating(${i},${v})">★</button>`).join("")}</div>`).join("")
 }
-function setRating(i,v){reportRatings[i]=v;renderRatingQuestions()}
+function setRating(i,v){reportRatings[i]=v;renderRatingQuestions();scheduleReportDraftSave()}
+
+function reportDraftKey(bookingId){return `helaa_report_draft_${bookingId}`}
+function readReportDraft(bookingId){return parseJSON(storageGet(reportDraftKey(bookingId)),null)}
+function saveReportDraftLocal(){
+  const bookingId=$("reportBookingId")?.value;if(!bookingId)return;
+  const draft={taught:$("reportTaught").value,progress:$("reportProgress").value,reaction:$("reportReaction").value,attention:$("reportAttention").value,next:$("reportNext").value,ratings:[...reportRatings],savedAt:new Date().toISOString()};storageSet(reportDraftKey(bookingId),JSON.stringify(draft));
+  const el=$("reportDraftStatus");if(el)el.textContent=`Draf disimpan ${new Date().toLocaleTimeString("ms-MY",{hour:"2-digit",minute:"2-digit"})}. Lampiran fail tidak termasuk dalam autosave.`;
+}
+function scheduleReportDraftSave(){clearTimeout(reportDraftTimer);reportDraftTimer=setTimeout(saveReportDraftLocal,700)}
+function clearReportDraftLocal(bookingId){storageRemove(reportDraftKey(bookingId));const el=$("reportDraftStatus");if(el)el.textContent="Laporan telah dihantar. Draf tempatan dibersihkan."}
+async function openPkskHostReport(slotId){
+  if(!adminMode){alert("Fungsi laporan Felo Yamin hanya melalui akaun Pentadbir.");return}
+  const {data,error}=await supabaseClient.rpc("ensure_pksk_host_booking",{p_slot_id:slotId});if(error){alert("Tidak dapat membuka laporan PKSK Felo Yamin: "+error.message);return}
+  await loadSupabaseState();const bid=typeof data==="string"?data:data?.booking_id||data;const b=bookings.find(x=>String(x.id)===String(bid));if(!b){alert("Rekod laporan PKSK belum dapat dimuatkan. Cuba sekali lagi.");return}openReport(b.id)
+}
 function renderMentorReports(){
-  const eligible=bookings.filter(b=>b.email?.toLowerCase()===currentEmail.toLowerCase()&&isFinalStatus(b)).sort((a,b)=>slotById(a.slotId)?.date.localeCompare(slotById(b.slotId)?.date||"")||0);
-  $("mentorReportList").innerHTML=eligible.length?eligible.map(b=>{const s=slotById(b.slotId),r=reports.find(x=>x.bookingId===b.id);return `<div class="card"><div class="card-top"><div><h4>${esc(s?.subject||"Sesi")}</h4><div class="meta">${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.group)}`:""}<br>Mentee: <b>${esc(bookingStudentName(b))}</b></div></div>${r?badge(r.status):'<span class="badge info">Belum Dihantar</span>'}</div>${r?.adminNote?`<div class="notice warn"><b>Catatan Pentadbir:</b> ${esc(r.adminNote)}</div>`:""}${r?mentorEvaluationMarkup(r.id):""}<div class="actions"><button class="primary" onclick="openReport('${b.id}')">${r?"Lihat / Edit Laporan":"Sediakan Laporan"}</button>${r?`<button class="secondary" type="button" onclick="printMentorReport('${r.id}')">Cetak Laporan</button>`:""}${r?.status==="approved"?`<span class="meta">Jika diedit, laporan perlu disemak semula.</span>`:""}</div></div>`}).join(""):'<div class="empty">Belum ada sesi yang diluluskan untuk laporan.</div>'
+  const own=bookings.filter(b=>String(b.email||"").toLowerCase()===currentEmail.toLowerCase()&&isFinalStatus(b));
+  const cards=own.map(b=>({kind:"booking",b,s:slotById(b.slotId)}));
+  if(adminMode&&/YAMIN/i.test(currentMentorProfile()?.fullName||"")){
+    for(const s of SCHEDULE.filter(s=>s.mode==="pksk")){
+      const host=bookings.find(b=>b.slotId===s.id&&b.bookingRole==="pksk_host"&&String(b.email||"").toLowerCase()===currentEmail.toLowerCase());
+      if(host){if(!cards.some(x=>x.b?.id===host.id))cards.push({kind:"booking",b:host,s})}
+      else cards.push({kind:"pksk_host_available",s});
+    }
+  }
+  cards.sort((a,b)=>String(b.s?.date||"").localeCompare(String(a.s?.date||""))||slotStartMinutes(b.s)-slotStartMinutes(a.s));
+  $("mentorReportList").innerHTML=cards.length?cards.map(item=>{
+    const s=item.s;
+    if(item.kind==="pksk_host_available")return `<div class="card pksk-host-card"><div class="card-top"><div><h4>${esc(s.subject)} • Laporan Felo Yamin</h4><div class="meta">${s.day}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.group)}<br>Ariana + Fathemah • ${esc(s.topic||"")}</div></div><span class="badge info">PKSK</span></div><div class="notice info">Laporan Felo Yamin adalah berasingan daripada laporan mentor tambahan.</div><div class="actions"><button class="primary" type="button" onclick="openPkskHostReport('${s.id}')">Sediakan Laporan Felo Yamin</button></div></div>`;
+    const b=item.b,r=reports.find(x=>x.bookingId===b.id);const canCheckIn=["approved","reassigned"].includes(b.status)&&!b.checkedInAt&&s?.date===malaysiaTodayISO();
+    return `<div class="card"><div class="card-top"><div><h4>${esc(s?.subject||"Sesi")}${b.bookingRole==="pksk_host"?" • Felo Yamin":""}</h4><div class="meta">${s?`${s.day}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.group)}`:""}<br>Mentee: <b>${esc(bookingStudentName(b))}</b></div></div>${r?badge(r.status):'<span class="badge info">Belum Dihantar</span>'}</div>${b.checkedInAt?`<div class="notice success compact-notice">Check-in direkodkan: ${fmtDateTime(b.checkedInAt)}</div>`:""}${r?.adminNote?`<div class="notice warn"><b>Catatan Pentadbir:</b> ${esc(r.adminNote)}</div>`:""}${r?mentorEvaluationMarkup(r.id):""}<div class="actions">${canCheckIn?`<button class="ghost" type="button" onclick="mentorCheckIn('${b.id}')">Saya Sudah Tiba</button>`:""}<button class="primary" onclick="openReport('${b.id}')">${r?"Lihat / Edit Laporan":"Sediakan Laporan"}</button>${r?`<button class="secondary" type="button" onclick="printMentorReport('${r.id}')">Cetak Laporan</button>`:""}${r?.status==="approved"?`<span class="meta">Jika diedit, laporan perlu disemak semula.</span>`:""}</div></div>`
+  }).join(""):'<div class="empty">Belum ada sesi yang diluluskan untuk laporan.</div>'
 }
 function openReport(bookingId){
   const b=bookings.find(x=>x.id===bookingId),s=slotById(b?.slotId);if(!b||!s)return;
   const r=reports.find(x=>x.bookingId===bookingId);activeReportId=r?.id||null;reportWorkingAttachments=[...(r?.attachments||[])];reportRatings=r?.ratings?.length===5?[...r.ratings]:[0,0,0,0,0];
   $("reportBookingId").value=bookingId;$("reportModalTitle").textContent=r?"Edit Laporan Mentor":"Laporan Mentor";$("reportSessionSummary").innerHTML=`<b>${s.day}, ${fmtDate(s.date)}</b> • ${esc(s.time)}<br><b>${esc(s.subject)}</b> • ${esc(s.group)} • Mentee: <b>${esc(bookingStudentName(b))}</b><br>Mentor: ${esc(b.mentorName)} (${esc(b.mentorMatric||currentMatric)})`;
-  $("reportTaught").value=r?.taught||"";$("reportProgress").value=r?.progress||"";$("reportReaction").value=r?.reaction||"";$("reportAttention").value=r?.attention||"";$("reportNext").value=r?.next||"";$("reportFiles").value="";
+  const draft=readReportDraft(bookingId);
+  $("reportTaught").value=draft?.taught??r?.taught??"";$("reportProgress").value=draft?.progress??r?.progress??"";$("reportReaction").value=draft?.reaction??r?.reaction??"";$("reportAttention").value=draft?.attention??r?.attention??"";$("reportNext").value=draft?.next??r?.next??"";$("reportFiles").value="";
+  if(draft?.ratings?.length===5)reportRatings=[...draft.ratings];
+  const draftStatus=$("reportDraftStatus");if(draftStatus)draftStatus.textContent=draft?.savedAt?`Draf tempatan dipulihkan (${fmtDateTime(draft.savedAt)}). Lampiran fail perlu dipilih semula jika belum dihantar.`:"Draf akan disimpan automatik semasa anda menaip.";
+  ["reportTaught","reportProgress","reportReaction","reportAttention","reportNext"].forEach(id=>{const el=$(id);if(el&&!el.dataset.autosaveBound){el.addEventListener("input",scheduleReportDraftSave);el.dataset.autosaveBound="1"}});
   $("reportAdminFeedback").classList.toggle("hidden",!r?.adminNote);$("reportAdminFeedback").innerHTML=r?.adminNote?`<b>Catatan Pentadbir:</b> ${esc(r.adminNote)}`:"";renderRatingQuestions();renderExistingReportAttachments();$("reportModal").classList.add("open")
 }
 function renderExistingReportAttachments(){
@@ -995,28 +1203,24 @@ function archiveReportBadgeClass(status){
   return "info";
 }
 function archiveRecordHasEnded(r){return slotHasEnded({date:r.classDate,time:r.time})}
+function resetArchivePagination(){archiveVisibleCount=25}
+function loadMoreArchive(){archiveVisibleCount+=25;renderClassArchive()}
+function resetArchiveFilters(){["archiveSearch","archiveDateFilter"].forEach(id=>{if($(id))$(id).value=""});if($("archiveGroupFilter"))$("archiveGroupFilter").value="all";if($("archiveReportFilter"))$("archiveReportFilter").value="all";resetArchivePagination();renderClassArchive()}
+function fillArchiveFilters(){const g=$("archiveGroupFilter");if(g&&g.options.length<=1)g.innerHTML='<option value="all">Semua Tahun/Tingkatan</option>'+GROUP_ORDER.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("")}
 function classArchiveRecords(){
-  return [...mentorServiceRecords]
-    .filter(r=>["approved","reassigned"].includes(r.bookingStatus))
-    .filter(archiveRecordHasEnded)
-    .sort((a,b)=>{
-      const d=String(b.classDate||"").localeCompare(String(a.classDate||""));if(d)return d;
-      const t=slotStartMinutes({time:b.time})-slotStartMinutes({time:a.time});if(t)return t;
-      return String(b.bookingId||"").localeCompare(String(a.bookingId||""));
-    });
+  fillArchiveFilters();const q=$("archiveSearch")?.value.trim().toLowerCase()||"",date=$("archiveDateFilter")?.value||"",group=$("archiveGroupFilter")?.value||"all",rf=$("archiveReportFilter")?.value||"all";
+  return [...mentorServiceRecords].filter(r=>["approved","reassigned"].includes(r.bookingStatus)).filter(archiveRecordHasEnded).filter(r=>!date||r.classDate===date).filter(r=>group==="all"||r.group===group).filter(r=>rf==="all"||(rf==="missing"?!r.reportId:r.reportStatus===rf)).filter(r=>!q||`${r.mentorName} ${r.mentorMatric} ${r.menteeName} ${r.subject} ${r.group}`.toLowerCase().includes(q)).sort((a,b)=>String(b.classDate||"").localeCompare(String(a.classDate||""))||slotStartMinutes({time:b.time})-slotStartMinutes({time:a.time})||String(b.bookingId||"").localeCompare(String(a.bookingId||"")))
 }
 function renderClassArchive(){
-  const body=$("classArchiveBody"),summary=$("classArchiveSummary");if(!body||!summary)return;
-  const rows=classArchiveRecords();
-  const sent=rows.filter(r=>!!r.reportId).length,approved=rows.filter(r=>r.reportStatus==="approved").length;
-  summary.innerHTML=`<div class="archive-stat"><b>${rows.length}</b><span>Kelas Direkodkan</span></div><div class="archive-stat"><b>${sent}</b><span>Laporan Dihantar</span></div><div class="archive-stat"><b>${approved}</b><span>Laporan Diluluskan</span></div>`;
-  if(!rows.length){body.innerHTML='<tr><td colspan="5"><div class="empty">Belum ada kelas yang telah selesai untuk dipaparkan dalam arkib.</div></td></tr>';return}
-  body.innerHTML=rows.map(r=>{
-    const no=archiveReportNumber(r.reportId),canOpen=!!r.reportId&&(adminMode||r.reportStatus==="approved");
-    const reportCell=!r.reportId?'<span class="badge info">Belum Dihantar</span>':`<div class="archive-report-cell"><span class="badge ${archiveReportBadgeClass(r.reportStatus)}">${esc(archiveReportStatusLabel(r.reportStatus))}</span>${canOpen?`<button class="archive-report-link" type="button" onclick="openArchiveReport('${esc(r.reportId)}')">${esc(no)}</button>`:`<span class="archive-report-number muted">${esc(no)}</span>`}</div>`;
-    return `<tr><td data-label="Tarikh"><b>${r.classDate?esc(fmtDate(r.classDate)):"-"}</b><span class="archive-subline">${esc(r.time||"-")}</span></td><td data-label="Mentor"><b>${esc(r.mentorName||"Mentor")}</b><span class="archive-subline">${esc(r.mentorMatric||"-")}</span></td><td data-label="Mentee"><b>${esc(r.menteeName||"Mentee")}</b></td><td data-label="Subjek"><b>${esc(r.subject||"-")}</b><span class="archive-subline">${esc(r.group||"-")}</span></td><td data-label="Status Laporan">${reportCell}</td></tr>`;
-  }).join("");
+  const body=$("classArchiveBody"),summary=$("classArchiveSummary");if(!body||!summary)return;const all=classArchiveRecords(),rows=all.slice(0,archiveVisibleCount),reportsSent=all.filter(r=>!!r.reportId).length,reportsApproved=all.filter(r=>r.reportStatus==="approved").length;
+  summary.innerHTML=`<div class="archive-stat"><b>${all.length}</b><span>Kelas Direkodkan</span></div><div class="archive-stat"><b>${reportsSent}</b><span>Laporan Dihantar</span></div><div class="archive-stat"><b>${reportsApproved}</b><span>Laporan Diluluskan</span></div>`;
+  if(!rows.length){body.innerHTML='<tr><td colspan="5"><div class="empty">Belum ada kelas yang sepadan untuk dipaparkan.</div></td></tr>';$("archiveLoadMoreBtn")?.classList.add("hidden");return}
+  body.innerHTML=rows.map(r=>{const reportNo=archiveReportNumber(r.reportId),canOpen=!!r.reportId&&(adminMode||r.reportStatus==="approved"),b=bookings.find(x=>x.id===r.bookingId),last=b?.reportReminderLastAt;const reportCell=!r.reportId?`<div class="archive-report-cell"><span class="badge info">Belum Dihantar</span>${adminMode&&b?`<button class="archive-remind-btn" type="button" onclick="remindMissingReport('${b.id}')">🔔 Ingatkan Mentor</button>${last?`<span class="archive-reminder-last">Terakhir ${fmtDateTime(last)}</span>`:""}`:""}</div>`:`<div class="archive-report-cell"><span class="badge ${archiveReportBadgeClass(r.reportStatus)}">${esc(archiveReportStatusLabel(r.reportStatus))}</span>${canOpen?`<button class="archive-report-link" type="button" onclick="openArchiveReport('${esc(r.reportId)}')">${esc(reportNo)}</button>`:`<span class="archive-report-number muted">${esc(reportNo)}</span>`}</div>`;return `<tr><td data-label="Tarikh"><b>${r.classDate?esc(fmtDate(r.classDate)):"-"}</b><span class="archive-subline">${esc(r.time||"-")}</span></td><td data-label="Mentor"><b>${esc(r.mentorName||"Mentor")}</b><span class="archive-subline">${esc(r.mentorMatric||"-")}</span></td><td data-label="Mentee"><b>${esc(r.menteeName||"Mentee")}</b></td><td data-label="Subjek"><b>${esc(r.subject||"-")}</b><span class="archive-subline">${esc(r.group||"-")}</span></td><td data-label="Status Laporan">${reportCell}</td></tr>`}).join("");$("archiveLoadMoreBtn")?.classList.toggle("hidden",all.length<=archiveVisibleCount)
 }
+function printClassArchive(){
+  const rows=classArchiveRecords();const body=rows.map(r=>`<tr><td>${r.classDate?esc(fmtDate(r.classDate)):"-"}<br><small>${esc(r.time||"")}</small></td><td>${esc(r.mentorName||"-")}<br><small>${esc(r.mentorMatric||"")}</small></td><td>${esc(r.menteeName||"-")}</td><td>${esc(r.subject||"-")}<br><small>${esc(r.group||"")}</small></td><td>${esc(archiveReportStatusLabel(r.reportStatus||""))}${r.reportId?` • ${esc(archiveReportNumber(r.reportId))}`:""}</td></tr>`).join("");const html=`<!doctype html><html><head><meta charset="utf-8"><title>Arkib Kelas</title><style>body{font-family:Arial;color:#1f2d3d}.page{padding:20px}.brand{color:#315b7d;font-weight:bold;font-size:11px}h1{margin:5px 0}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #cfd9e1;padding:7px;font-size:9px;text-align:left}th{background:#eef4f8}small{color:#667085}@media print{@page{size:A4 landscape;margin:10mm}.page{padding:0}}</style></head><body><div class="page"><div class="brand">HELAA KRK • Sistem Mentor-Mentee Rukaiyah</div><h1>Arkib Kelas</h1><div>${rows.length} rekod • Dicetak ${new Date().toLocaleString("ms-MY")}</div><table><thead><tr><th>Tarikh</th><th>Mentor</th><th>Mentee</th><th>Subjek</th><th>Status Laporan</th></tr></thead><tbody>${body}</tbody></table></div></body></html>`;printHtmlDocument(html)
+}
+
 function openArchiveReport(reportId){
   const r=reports.find(x=>x.id===reportId),service=mentorServiceRecords.find(x=>x.reportId===reportId);
   if(!r){alert("Laporan ini belum boleh dipaparkan kepada pengguna ini.");return}
@@ -1035,57 +1239,24 @@ function renderApprovedReports(){
 
 
 
-function printDraftMentorReport(){
-  const bookingId=$("reportBookingId").value;
-  const b=bookings.find(x=>x.id===bookingId);
-  if(!b){alert("Rekod tempahan tidak ditemui.");return}
-  const draft={
-    id:"draft",
-    bookingId,
-    taught:$("reportTaught").value.trim(),
-    progress:$("reportProgress").value.trim(),
-    reaction:$("reportReaction").value.trim(),
-    attention:$("reportAttention").value.trim(),
-    next:$("reportNext").value.trim(),
-    ratings:[...reportRatings],
-    status:"DRAF",
-    adminNote:"",
-    createdAt:new Date().toISOString(),
-    updatedAt:new Date().toISOString(),
-    attachments:[]
-  };
-  printMentorReportData(draft,b,true);
+async function reportPrintImages(r,isDraft=false){
+  const imgs=[];
+  for(const a of (r.attachments||[])){if(isImageType(a.type,a.name)&&a.key){const data=await imageKeyToDataUrl(a.key);if(data)imgs.push({name:a.name,data})}}
+  if(isDraft){for(let f of [...($("reportFiles")?.files||[])]){if(f.type?.startsWith("image/")){try{f=await compressImageFile(f,{maxDimension:1400,quality:.8});imgs.push({name:f.name,data:await blobToDataUrl(f)})}catch{}}}}
+  return imgs;
 }
-function printMentorReportData(r,b,isDraft=false){
-  const s=slotById(b?.slotId);
-  const ratings=(r.ratings||[]);
-  const ratingRows=RATING_LABELS.map((label,i)=>`<tr><td>${esc(label)}</td><td style="text-align:center;font-weight:700">${ratings[i]?esc(String(ratings[i]))+"/5":"Belum dinilai"}</td></tr>`).join("");
-  const html=`<!doctype html><html lang="ms"><head><meta charset="utf-8"><title>${isDraft?"Draf ":""}Laporan Mentor - ${esc(bookingStudentName(b))}</title><style>
-  *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#1f2d3d;margin:0}.page{max-width:820px;margin:auto;padding:34px}.head{border-bottom:3px solid #587590;padding-bottom:16px;margin-bottom:22px}.brand{font-size:12px;font-weight:700;letter-spacing:.08em;color:#587590;text-transform:uppercase}h1{font-size:25px;margin:5px 0}.sub{color:#667085;font-size:13px;line-height:1.5}.status{display:inline-block;margin-top:10px;padding:6px 10px;border-radius:999px;background:#edf2f6;color:#344d65;font-size:12px;font-weight:700}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}.box,.text{border:1px solid #d8e1e8;border-radius:10px;padding:12px}.label{font-size:11px;text-transform:uppercase;color:#667085;font-weight:700;margin-bottom:5px}.value{font-size:14px;font-weight:700}.section{margin-top:20px}.section h2{font-size:16px;color:#344d65}.text{white-space:pre-wrap;line-height:1.55;font-size:13px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d8e1e8;padding:9px;font-size:12px;text-align:left}th{background:#f4f7f9}.draft{background:#fff3cd;border:1px solid #efd37a;padding:10px;border-radius:8px;margin:12px 0;font-weight:700}.no-print{margin-bottom:18px}button{background:#587590;color:#fff;border:0;border-radius:8px;padding:10px 14px;font-weight:700}@media print{.no-print{display:none}.page{padding:0}@page{size:A4;margin:16mm}}</style></head><body><div class="page">
-  <div class="no-print"><button onclick="window.print()">Cetak / Simpan sebagai PDF</button></div>
-  <div class="head"><div class="brand">HELAA KRK • Projek Komuniti Rukaiyah</div><h1>${isDraft?"Draf ":""}Laporan Mentor kepada Mentee</h1><div class="sub">Sistem Mentor-Mentee Rukaiyah<br>Kolej Rahim Kajai, Universiti Kebangsaan Malaysia</div>${isDraft?'<div class="draft">DRAF BELUM DIHANTAR UNTUK SEMAKAN</div>':`<span class="status">${esc(statusLabel(r.status||"pending"))}</span>`}</div>
-  <div class="grid"><div class="box"><div class="label">Mentee</div><div class="value">${esc(bookingStudentName(b))}</div></div><div class="box"><div class="label">Mentor</div><div class="value">${esc(b.mentorName||"-")} (${esc(b.mentorMatric||"-")})</div></div><div class="box"><div class="label">Subjek</div><div class="value">${esc(s?.subject||"-")}</div></div><div class="box"><div class="label">Tahun / Tingkatan</div><div class="value">${esc(s?.group||"-")}</div></div><div class="box"><div class="label">Tarikh</div><div class="value">${s?esc(`${s.day}, ${fmtDate(s.date)}`):"-"}</div></div><div class="box"><div class="label">Masa</div><div class="value">${esc(s?.time||"-")}</div></div></div>
-  <div class="section"><h2>1. Apa yang diajar</h2><div class="text">${esc(r.taught||"Belum diisi")}</div></div>
-  <div class="section"><h2>2. Progress / kemajuan mentee</h2><div class="text">${esc(r.progress||"Belum diisi")}</div></div>
-  <div class="section"><h2>3. Reaksi, tingkah laku dan tahap kefahaman</h2><div class="text">${esc(r.reaction||"Belum diisi")}</div></div>
-  <div class="section"><h2>4. Perkara yang perlu diberi perhatian</h2><div class="text">${esc(r.attention||"Belum diisi")}</div></div>
-  <div class="section"><h2>5. Cadangan untuk sesi seterusnya</h2><div class="text">${esc(r.next||"Belum diisi")}</div></div>
-  <div class="section"><h2>Penilaian Sesi</h2><table><thead><tr><th>Aspek</th><th style="width:110px;text-align:center">Skor</th></tr></thead><tbody>${ratingRows}</tbody></table></div>
-  </div></body></html>`;
-  const oldFrame=document.getElementById("helaaPrintFrame");if(oldFrame)oldFrame.remove();
-  const frame=document.createElement("iframe");frame.id="helaaPrintFrame";frame.setAttribute("aria-hidden","true");frame.style.position="fixed";frame.style.right="0";frame.style.bottom="0";frame.style.width="1px";frame.style.height="1px";frame.style.border="0";frame.style.opacity="0";frame.style.pointerEvents="none";document.body.appendChild(frame);
-  const doc=frame.contentWindow.document;doc.open();doc.write(html);doc.close();
-  let printed=false;const doPrint=()=>{if(printed)return;printed=true;try{frame.contentWindow.focus();frame.contentWindow.print()}catch(err){console.error("Print error",err);alert("Paparan cetak tidak dapat dibuka. Sila cuba sekali lagi.")}setTimeout(()=>frame.remove(),4000)};
-  frame.onload=()=>setTimeout(doPrint,250);setTimeout(doPrint,750);
+async function printDraftMentorReport(){
+  const bookingId=$("reportBookingId").value,b=bookings.find(x=>x.id===bookingId);if(!b){alert("Rekod tempahan tidak ditemui.");return}
+  const draft={id:"draft",bookingId,taught:$("reportTaught").value.trim(),progress:$("reportProgress").value.trim(),reaction:$("reportReaction").value.trim(),attention:$("reportAttention").value.trim(),next:$("reportNext").value.trim(),ratings:[...reportRatings],status:"DRAF",adminNote:"",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),attachments:[...reportWorkingAttachments]};await printMentorReportData(draft,b,true)
 }
-
-function printMentorReport(reportId){
-  const r=reports.find(x=>x.id===reportId);
-  if(!r){alert("Laporan tidak ditemui.");return}
-  const b=bookings.find(x=>x.id===r.bookingId);
-  if(!b){alert("Rekod tempahan untuk laporan ini tidak ditemui.");return}
-  printMentorReportData(r,b,false);
+async function printMentorReportData(r,b,isDraft=false){
+  const s=slotById(b?.slotId),ratings=(r.ratings||[]),images=await reportPrintImages(r,isDraft);
+  const ratingRows=RATING_LABELS.map((label,i)=>{const score=Number(ratings[i]||0);return `<tr><td>${i+1}. ${esc(label)}</td><td class="stars-cell">${score?`${"★".repeat(score)}${"☆".repeat(5-score)} <b>${score}/5</b>`:"Belum dinilai"}</td></tr>`}).join("");
+  const gallery=images.length?`<div class="section"><h2>Lampiran Gambar Aktiviti (${images.length})</h2><div class="print-gallery">${images.map(x=>`<figure><img src="${x.data}" alt="${esc(x.name)}"><figcaption>${esc(x.name)}</figcaption></figure>`).join("")}</div></div>`:`<div class="section"><h2>Lampiran Gambar Aktiviti</h2><div class="text">Tiada gambar tersedia dalam cetakan ini.</div></div>`;
+  const html=`<!doctype html><html lang="ms"><head><meta charset="utf-8"><title>${isDraft?"Draf ":""}Laporan Mentor - ${esc(bookingStudentName(b))}</title><style>*{box-sizing:border-box}body{font-family:Arial;color:#1f2d3d;margin:0}.page{max-width:820px;margin:auto;padding:30px}.head{border-bottom:3px solid #587590;padding-bottom:14px}.brand{font-size:11px;font-weight:700;color:#587590;text-transform:uppercase;letter-spacing:.08em}h1{font-size:24px;margin:5px 0}.sub{color:#667085;font-size:12px}.draft{margin-top:10px;background:#fff3cd;border:1px solid #efd37a;padding:9px;border-radius:8px;font-weight:700}.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:16px 0}.box,.text{border:1px solid #d8e1e8;border-radius:9px;padding:10px}.label{font-size:9px;text-transform:uppercase;color:#667085;font-weight:700}.value{font-size:13px;font-weight:700;margin-top:3px}.section{margin-top:16px}.section h2{font-size:15px;color:#344d65}.text{white-space:pre-wrap;line-height:1.5;font-size:12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d8e1e8;padding:8px;font-size:11px;text-align:left}th{background:#f4f7f9}.stars-cell{font-size:14px;letter-spacing:.04em}.print-gallery{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.print-gallery figure{margin:0;border:1px solid #d8e1e8;border-radius:8px;padding:6px;break-inside:avoid}.print-gallery img{width:100%;max-height:360px;object-fit:contain;display:block}.print-gallery figcaption{font-size:8px;color:#667085;margin-top:4px}.feedback{background:#fff8e8;border:1px solid #f0d9a2;border-radius:9px;padding:10px}@media print{@page{size:A4;margin:14mm}.page{padding:0}.print-gallery figure{break-inside:avoid}}</style></head><body><div class="page"><div class="head"><div class="brand">HELAA KRK • Projek Komuniti Rukaiyah</div><h1>${isDraft?"Draf ":""}Laporan Mentor kepada Mentee</h1><div class="sub">Sistem Mentor-Mentee Rukaiyah • Kolej Rahim Kajai, Universiti Kebangsaan Malaysia</div>${isDraft?'<div class="draft">DRAF BELUM DIHANTAR UNTUK SEMAKAN</div>':""}</div><div class="grid"><div class="box"><div class="label">Mentee</div><div class="value">${esc(bookingStudentName(b))}</div></div><div class="box"><div class="label">Mentor</div><div class="value">${esc(b.mentorName||"-")} (${esc(b.mentorMatric||"-")})</div></div><div class="box"><div class="label">Subjek</div><div class="value">${esc(s?.subject||"-")}</div></div><div class="box"><div class="label">Tahun / Tingkatan</div><div class="value">${esc(s?.group||"-")}</div></div><div class="box"><div class="label">Tarikh</div><div class="value">${s?esc(`${s.day}, ${fmtDate(s.date)}`):"-"}</div></div><div class="box"><div class="label">Masa</div><div class="value">${esc(s?.time||"-")}</div></div></div><div class="section"><h2>1. Apa yang diajar</h2><div class="text">${esc(r.taught||"Belum diisi")}</div></div><div class="section"><h2>2. Progress / kemajuan mentee</h2><div class="text">${esc(r.progress||"Belum diisi")}</div></div><div class="section"><h2>3. Reaksi, tingkah laku dan tahap kefahaman</h2><div class="text">${esc(r.reaction||"Belum diisi")}</div></div><div class="section"><h2>4. Perkara yang perlu diberi perhatian</h2><div class="text">${esc(r.attention||"Belum diisi")}</div></div><div class="section"><h2>5. Cadangan untuk sesi seterusnya</h2><div class="text">${esc(r.next||"Belum diisi")}</div></div><div class="section"><h2>Penilaian 5 Aspek</h2><table><thead><tr><th>Soalan Penilaian</th><th>Skor</th></tr></thead><tbody>${ratingRows}</tbody></table></div>${gallery}${r.adminNote?`<div class="section"><h2>Catatan Pentadbir</h2><div class="feedback">${esc(r.adminNote)}</div></div>`:""}</div></body></html>`;
+  printHtmlDocument(html)
 }
+async function printMentorReport(reportId){const r=reports.find(x=>x.id===reportId);if(!r){alert("Laporan tidak ditemui.");return}const b=bookings.find(x=>x.id===r.bookingId);if(!b){alert("Rekod tempahan tidak ditemui.");return}await printMentorReportData(r,b,false)}
 
 // ---------- Teaching materials ----------
 function fillMaterialSlots(){if(!$("materialSlot"))return;$("materialSlot").innerHTML=SCHEDULE.map(s=>`<option value="${s.id}">${s.day} ${fmtDate(s.date)} | ${s.time} | ${s.subject} | ${s.group}${s.topic?" | "+s.topic:""}</option>`).join("")}
@@ -1207,8 +1378,39 @@ function saveScheduleItem(){if(!adminMode)return;const date=$("scheduleDate").va
 function deleteScheduleItem(id){if(!adminMode)return;const s=slotById(id);if(!s)return;const relatedBookings=bookings.filter(b=>b.slotId===id),relatedMaterials=materials.filter(m=>m.slotId===id);const extra=(relatedBookings.length||relatedMaterials.length)?`\n\nSlot ini mempunyai ${relatedBookings.length} tempahan dan ${relatedMaterials.length} rekod bahan. Jika diteruskan, rekod berkaitan turut dipadam.`:"";if(!confirm(`Padam slot ${s.subject} • ${s.group} pada ${fmtDate(s.date)}?${extra}`))return;const bookingIds=new Set(relatedBookings.map(b=>b.id));SCHEDULE=SCHEDULE.filter(x=>x.id!==id);bookings=bookings.filter(b=>b.slotId!==id);reports=reports.filter(r=>!bookingIds.has(r.bookingId));materials=materials.filter(m=>m.slotId!==id);if(!SCHEDULE.some(x=>x.date===selectedDate))selectedDate=SCHEDULE[0]?.date||"";saveAll();fillMaterialSlots();renderAll();renderAdminSchedule();alert("Slot jadual telah dipadam.")}
 
 // ---------- Admin dashboard ----------
+
+function pendingHours(b){return Math.max(0,(Date.now()-new Date(b.createdAt||Date.now()).getTime())/3600000)}
+function upcomingSlotsNeedingMentors(){const now=new Date();return SCHEDULE.filter(s=>{const start=slotEndDateTime({...s,time:String(s.time).split("-")[0].trim()+" - "+String(s.time).split("-")[0].trim()})||new Date(`${s.date}T23:59:00`);return start>now&&activeApplicationsForSlot(s.id).length<capacityForSlot(s)}).sort(bookingSlotSort).slice(0,8)}
+function renderAdminActionCenter(){
+  if(!adminMode)return;const el=$("adminActionCenter");if(!el)return;
+  const conflicts=bookings.filter(b=>adminBookingConflictInfo(b)).length;
+  const missing=bookings.filter(b=>["approved","reassigned"].includes(b.status)&&slotHasEnded(slotById(b.slotId))&&!reports.some(r=>r.bookingId===b.id)).length;
+  const incomplete=mentorProfiles.filter(p=>p.matric&&mentorProfileCompleteness(p)<100).length;
+  const oldPending=bookings.filter(b=>b.status==="pending"&&pendingHours(b)>=12).length;
+  const slots=upcomingSlotsNeedingMentors();
+  const cards=[
+    {n:conflicts,label:"Konflik mentor-mentee",action:"openAdminPane('bookings')"},
+    {n:missing,label:"Laporan belum dihantar",action:"switchTab('classArchive')"},
+    {n:incomplete,label:"Profil mentor belum lengkap",action:"switchTab('mentorDirectory')"},
+    {n:oldPending,label:"Tempahan menunggu >12 jam",action:"openAdminPane('bookings')"},
+    {n:slots.length,label:"Slot akan datang perlukan mentor",action:"switchTab('booking')"}
+  ];
+  el.innerHTML=`<div class="action-center-grid">${cards.map(c=>`<button type="button" onclick="${c.action}"><b>${c.n}</b><span>${esc(c.label)}</span></button>`).join("")}</div>${slots.length?`<div class="action-slot-list">${slots.map(s=>`<div><b>${fmtDate(s.date)} • ${esc(s.time)}</b><span>${esc(s.subject)} • ${esc(s.group)} • ${activeApplicationsForSlot(s.id).length}/${capacityForSlot(s)} permohonan aktif</span></div>`).join("")}</div>`:""}`
+}
+function csvCell(v){const s=String(v??"").replace(/"/g,'""');return `"${s}"`}
+function downloadCsv(name,headers,rows){const text='\ufeff'+[headers,...rows].map(r=>r.map(csvCell).join(",")).join("\n"),blob=new Blob([text],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+function exportAdminCsv(kind){
+  if(!adminMode)return;const stamp=malaysiaTodayISO();
+  if(kind==="bookings")downloadCsv(`helaa-tempahan-${stamp}.csv`,["No Tempahan","Tarikh","Masa","Subjek","Kumpulan","Mentor","Matrik","Mentee","Status","Kehadiran"],bookings.map(b=>{const s=slotById(b.slotId);return[b.ticket,s?.date,s?.time,s?.subject,s?.group,b.mentorName,b.mentorMatric,bookingStudentName(b),b.status,attendanceLabel(b.attendanceStatus)]}));
+  if(kind==="mentors")downloadCsv(`helaa-mentor-${stamp}.csv`,["Nama","Matrik","E-mel","Telefon","Fakulti","Program","Kelengkapan"],mentorProfiles.map(p=>[p.fullName,p.matric,p.email,p.phone,p.faculty,p.course,mentorProfileCompleteness(p)+"%"]));
+  if(kind==="mentees")downloadCsv(`helaa-mentee-${stamp}.csv`,["Nama","Tahun/Tingkatan","Gambaran"],students.map(s=>[s.name,s.group,s.summary]));
+  if(kind==="reports")downloadCsv(`helaa-laporan-${stamp}.csv`,["Report ID","Booking","Mentor","Mentee","Status","Apa diajar","Progress","Perlu perhatian"],reports.map(r=>{const b=bookings.find(x=>x.id===r.bookingId);return[archiveReportNumber(r.id),b?.ticket,b?.mentorName,b?bookingStudentName(b):"",r.status,r.taught,r.progress,r.attention]}));
+  if(kind==="logistics")downloadCsv(`helaa-logistik-${stamp}.csv`,["Tarikh","Jenis","Penghantar","Pengangkutan","Plat","Peserta","Status"],logisticsEntries.map(x=>[x.classDate,x.entryType,x.submitterName,transportModeLabel(x.transportMode),x.plateNo,(x.participantNames||[]).join("; "),x.status]));
+}
+function mapAuditLog(r){return {id:r.id,adminName:r.admin_name||"",adminMatric:r.admin_matric||"",action:r.action||"",entityType:r.entity_type||"",entityId:r.entity_id||"",summary:r.summary||"",createdAt:r.created_at}}
+function renderAdminAuditLog(){if(!adminMode)return;const body=$("adminAuditBody");if(!body)return;const q=$("auditSearch")?.value.trim().toLowerCase()||"",rows=adminAuditLog.filter(x=>!q||`${x.adminName} ${x.adminMatric} ${x.action} ${x.entityType} ${x.summary}`.toLowerCase().includes(q)).slice(0,200);body.innerHTML=rows.length?rows.map(x=>`<tr><td>${x.createdAt?fmtDateTime(x.createdAt):"-"}</td><td><b>${esc(x.adminName||"Pentadbir")}</b><span class="table-subline">${esc(x.adminMatric||"")}</span></td><td>${esc(x.action)}</td><td>${esc(x.entityType)}<span class="table-subline">${esc(x.entityId||"")}</span></td><td>${esc(x.summary||"-")}</td></tr>`).join(""):'<tr><td colspan="5"><div class="empty">Belum ada rekod audit.</div></td></tr>'}
 function renderAdminDashboard(){
-  if(!adminMode)return;
+  if(!adminMode)return;renderAdminActionCenter();
   const byDate=[...new Set(SCHEDULE.map(s=>s.date))].map(date=>{const slots=SCHEDULE.filter(s=>s.date===date),cap=slots.reduce((n,s)=>n+capacityForSlot(s),0),filled=slots.reduce((n,s)=>n+Math.min(capacityForSlot(s),approvedForSlot(s.id).length),0);return {date,day:slots[0].day,cap,filled,pct:cap?Math.round(filled/cap*100):0}});
   $("occupancyOverview").innerHTML=byDate.map(x=>`<div class="occupancy-row"><div class="occupancy-meta"><span>${x.day}, ${fmtDate(x.date)}</span><b>${x.filled}/${x.cap} (${x.pct}%)</b></div><div class="progress-bar"><div class="progress-fill" style="width:${x.pct}%"></div></div></div>`).join("");
   const activity=[...notifications].filter(n=>n.target==="*admin*").slice(0,7);$("adminRecentActivity").innerHTML=activity.length?activity.map(n=>`<div class="activity-mini"><b>${esc(n.message)}</b><div class="meta">${fmtDateTime(n.createdAt)}</div></div>`).join(""):'<div class="meta">Belum ada aktiviti Pentadbir.</div>';
@@ -1226,7 +1428,7 @@ function updateStats(){
   $("statMentors").textContent=mentorKeys.size;
   $("statMaterials").textContent=materials.length
 }
-function renderAdminAll(){if(!adminMode)return;renderAdminDashboard();renderAdminBookings();renderAdminMentorLive();renderAdminReports();renderMaterials();renderAdminSchedule();renderAdminMentees();renderNotifications();renderEmailSettings();renderLogisticsPage();renderRecycleBin();updateStats()}
+function renderAdminAll(){if(!adminMode)return;renderAdminDashboard();renderAdminBookings();renderAdminMentorLive();renderAdminReports();renderMaterials();renderAdminSchedule();renderAdminMentees();renderNotifications();renderEmailSettings();renderLogisticsPage();renderRecycleBin();renderFaqMedia();renderAdminAuditLog();updateStats()}
 function copyWhatsAppSummary(){
   const finals=bookings.filter(isFinalStatus).sort((a,b)=>(slotById(a.slotId)?.date||"").localeCompare(slotById(b.slotId)?.date||""));if(!finals.length){alert("Belum ada tempahan diluluskan.");return}
   const g={};finals.forEach(b=>{const s=slotById(b.slotId);(g[s.date] ||= []).push({b,s})});let t="*RINGKASAN MENTOR-MENTEE RUKAIYAH*\n";Object.entries(g).forEach(([d,arr])=>{t+=`\n*${arr[0].s.day}, ${fmtDate(d)}*\n`;arr.forEach(({b,s})=>t+=`• ${s.time} | ${s.subject} (${s.group}) | ${bookingStudentName(b)} → ${b.mentorName} (${b.mentorMatric||"-"})\n`)});navigator.clipboard?.writeText(t).then(()=>alert("Ringkasan disalin.")).catch(()=>prompt("Salin teks:",t))
@@ -1242,6 +1444,22 @@ function renderRecycleBin(){
   box.innerHTML=rows.map(x=>`<article class="recycle-item"><div class="recycle-main"><div><span class="badge info">${esc(recycleTypeLabel(x.recordType))}</span><h4>${esc(x.label||"Rekod")}</h4><div class="meta">Dipadam: ${x.deletedAt?fmtDateTime(x.deletedAt):"-"}<br>Oleh: ${esc(x.deletedByMatric||x.deletedByEmail||"Sistem")}</div></div>${adminMode?`<div class="meta recycle-owner">Pemilik rekod:<br><b>${esc(x.ownerMatric||x.ownerEmail||"-")}</b></div>`:""}</div><details><summary>Lihat butiran rekod</summary><pre>${esc(JSON.stringify(x.snapshot||{},null,2))}</pre></details></article>`).join("")
 }
 
+
+function attendanceLabel(status){return ({present:"Hadir",absent:"Tidak Hadir",replacement:"Diganti",cancelled:"Dibatalkan",withdrawn:"Tarik Diri",unchecked:"Belum Ditanda"})[status||"unchecked"]||status||"Belum Ditanda"}
+async function mentorCheckIn(bookingId){
+  const b=bookings.find(x=>x.id===bookingId);if(!b)return;if(!confirm(`Rekodkan bahawa anda sudah tiba untuk sesi ${b.ticket}?`))return;
+  const {error}=await supabaseClient.rpc("mentor_check_in",{p_booking_id:bookingId});if(error){alert("Check-in tidak berjaya: "+error.message);return}await loadSupabaseState();alert("Check-in berjaya direkodkan.")
+}
+async function adminSetAttendance(bookingId,status){
+  if(!adminMode)return;const b=bookings.find(x=>x.id===bookingId);if(!b)return;
+  const note=status==="present"?"":prompt(`Catatan kehadiran untuk ${b.mentorName} (${attendanceLabel(status)}):`,b.attendanceNote||"");if(note===null&&status!=="present")return;
+  const {error}=await supabaseClient.rpc("admin_set_booking_attendance",{p_booking_id:bookingId,p_status:status,p_note:(note||"").trim()||null});if(error){alert(error.message);return}await loadSupabaseState()
+}
+async function remindMissingReport(bookingId){
+  if(!adminMode)return;const b=bookings.find(x=>x.id===bookingId);if(!b)return;
+  if(!confirm(`Hantar peringatan laporan belum dihantar kepada ${b.mentorName}?`))return;
+  const {data,error}=await supabaseClient.rpc("admin_remind_missing_report",{p_booking_id:bookingId});if(error){alert(error.message);return}await loadSupabaseState();alert(data?.message||"Peringatan telah dihantar.")
+}
 // ---------- Admin live mentor identification ----------
 function adminLiveDates(){return [...new Set(SCHEDULE.map(s=>s.date).filter(Boolean))].sort()}
 function ensureAdminLiveDate(){const dates=adminLiveDates();if(!dates.length){adminLiveDate="";return}if(!adminLiveDate||!dates.includes(adminLiveDate)){const today=malaysiaTodayISO();adminLiveDate=dates.includes(today)?today:(dates.find(d=>d>today)||dates[dates.length-1])}}
@@ -1252,16 +1470,28 @@ function mentorPhoneForBooking(b){if(!b)return "-";const p=profileByMatric(b.men
 function renderAdminMentorLive(){
   if(!adminMode)return;const body=$("adminMentorLiveBody"),dateInput=$("adminLiveDate"),stamp=$("adminLiveUpdated");if(!body)return;
   ensureAdminLiveDate();if(dateInput)dateInput.value=adminLiveDate||"";if(stamp)stamp.textContent=`Dikemas kini ${new Date().toLocaleTimeString("ms-MY",{hour:"2-digit",minute:"2-digit"})}`;
-  const slots=SCHEDULE.filter(s=>s.date===adminLiveDate).sort(bookingSlotSort);const rows=[];
+  const slots=SCHEDULE.filter(s=>s.date===adminLiveDate).sort(bookingSlotSort),rows=[];
   for(const s of slots){
     if(s.mode==="pksk"){
-      const b=bookings.find(x=>x.slotId===s.id&&["pending","approved","reassigned"].includes(x.status))||null;
-      rows.push({s,mentee:"Ariana + Fathemah",b});continue;
+      const bs=bookings.filter(x=>x.slotId===s.id&&["pending","approved","reassigned"].includes(x.status));
+      if(bs.length)bs.forEach(b=>rows.push({s,mentee:"Ariana + Fathemah",b}));else rows.push({s,mentee:"Ariana + Fathemah",b:null});continue;
     }
-    for(const st of eligibleStudentsForSlot(s))rows.push({s,mentee:st.name,b:activeBookingForMenteeSlot(s.id,st.id)});
+    for(const st of eligibleStudentsForSlot(s))rows.push({s,mentee:st.name,b:activeBookingForMenteeSlot(s.id,st.id)})
   }
-  if(!rows.length){body.innerHTML='<tr><td colspan="5"><div class="empty">Tiada slot untuk tarikh ini.</div></td></tr>';return}
-  body.innerHTML=rows.map(({s,mentee,b})=>`<tr><td><b>${esc(s.day)}, ${fmtDate(s.date)}</b><span class="table-subline">${esc(s.time)} • ${esc(s.subject)}</span></td><td>${esc(s.group)}</td><td><b>${esc(mentee)}</b></td><td>${b?`<b>${esc(b.mentorName)}</b><span class="table-subline">${esc(b.mentorMatric||"-")} • ${esc(statusLabel(b.status))}</span>`:"-"}</td><td>${b?esc(mentorPhoneForBooking(b)):"-"}</td></tr>`).join("")
+  if(!rows.length){body.innerHTML='<tr><td colspan="6"><div class="empty">Tiada slot untuk tarikh ini.</div></td></tr>';return}
+  body.innerHTML=rows.map(({s,mentee,b})=>`<tr><td><b>${esc(s.day)}, ${fmtDate(s.date)}</b><span class="table-subline">${esc(s.time)} • ${esc(s.subject)}</span></td><td>${esc(s.group)}</td><td><b>${esc(mentee)}</b></td><td>${b?`<b>${esc(b.mentorName)}</b><span class="table-subline">${esc(b.mentorMatric||"-")} • ${esc(statusLabel(b.status))}${b.bookingRole==="pksk_host"?" • Felo Yamin":""}</span>`:"-"}</td><td>${b?esc(mentorPhoneForBooking(b)):"-"}</td><td>${b?`<div class="attendance-control"><select onchange="adminSetAttendance('${b.id}',this.value)"><option value="unchecked" ${!b.attendanceStatus||b.attendanceStatus==="unchecked"?"selected":""}>Belum Ditanda</option><option value="present" ${b.attendanceStatus==="present"?"selected":""}>Hadir</option><option value="absent" ${b.attendanceStatus==="absent"?"selected":""}>Tidak Hadir</option><option value="replacement" ${b.attendanceStatus==="replacement"?"selected":""}>Diganti</option><option value="cancelled" ${b.attendanceStatus==="cancelled"?"selected":""}>Dibatalkan</option><option value="withdrawn" ${b.attendanceStatus==="withdrawn"?"selected":""}>Tarik Diri</option></select>${b.checkedInAt?`<span class="table-subline">Check-in ${new Date(b.checkedInAt).toLocaleTimeString("ms-MY",{hour:"2-digit",minute:"2-digit"})}</span>`:""}</div>`:"-"}</td></tr>`).join("")
+}
+function printMentorRecognition(){
+  if(!adminMode)return;ensureAdminLiveDate();const slots=SCHEDULE.filter(s=>s.date===adminLiveDate).sort(bookingSlotSort),data=[];
+  for(const s of slots){
+    if(s.mode==="pksk"){
+      const bs=bookings.filter(x=>x.slotId===s.id&&["pending","approved","reassigned"].includes(x.status));
+      if(bs.length)bs.forEach(b=>data.push({s,mentee:"Ariana + Fathemah",b}));else data.push({s,mentee:"Ariana + Fathemah",b:null});continue;
+    }
+    for(const st of eligibleStudentsForSlot(s))data.push({s,mentee:st.name,b:activeBookingForMenteeSlot(s.id,st.id)})
+  }
+  const rows=data.map(({s,mentee,b})=>`<tr><td><b>${esc(s.day)}, ${fmtDate(s.date)}</b><br><small>${esc(s.time)} • ${esc(s.subject)}</small></td><td>${esc(s.group)}</td><td>${esc(mentee)}</td><td>${b?`${esc(b.mentorName)}<br><small>${esc(b.mentorMatric||"-")} • ${esc(statusLabel(b.status))}</small>`:"-"}</td><td>${b?esc(mentorPhoneForBooking(b)):"-"}</td><td>${b?esc(attendanceLabel(b.attendanceStatus)):"-"}</td></tr>`).join("");
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>Pengecaman Mentor ${esc(adminLiveDate)}</title><style>body{font-family:Arial;color:#1f2d3d}.page{padding:20px}.brand{color:#315b7d;font-weight:bold;font-size:11px}h1{margin:5px 0}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #cfd9e1;padding:7px;font-size:9px;text-align:left;vertical-align:top}th{background:#eef4f8}small{color:#667085}@media print{@page{size:A4 landscape;margin:10mm}.page{padding:0}}</style></head><body><div class="page"><div class="brand">HELAA KRK • Sistem Mentor-Mentee Rukaiyah</div><h1>Pengecaman Mentor</h1><div>${adminLiveDate?fmtDate(adminLiveDate):"-"} • Dicetak ${new Date().toLocaleString("ms-MY")}</div><table><thead><tr><th>Slot (Hari / Tarikh)</th><th>Tahun / Tingkatan</th><th>Nama Mentee</th><th>Nama Mentor</th><th>No. Tel Mentor</th><th>Kehadiran</th></tr></thead><tbody>${rows}</tbody></table></div></body></html>`;printHtmlDocument(html)
 }
 
 // ---------- Logistics & Transport ----------
@@ -1386,6 +1616,29 @@ async function rejectLogistics(id){
   await loadSupabaseState()
 }
 
+
+// ---------- FAQ media ----------
+function mapFaqMedia(r){return {id:r.id,slotNo:Number(r.slot_no),mediaType:r.media_type,title:r.title||"",description:r.description||"",key:r.storage_path?sbFileKey("faq-media",r.storage_path):"",fileName:r.file_name||"",mimeType:r.mime_type||"",updatedAt:r.updated_at}}
+function faqMediaBySlot(n){return faqMedia.find(x=>x.slotNo===Number(n))||null}
+async function renderFaqMedia(){
+  const pub=$("faqMediaPublic"),adm=$("faqMediaAdmin");if(!pub)return;
+  pub.innerHTML=[1,2,3,4].map(n=>{const x=faqMediaBySlot(n),type=n===4?"video":"poster";if(!x)return `<article class="faq-media-card empty-media"><div class="faq-media-placeholder">${type==="video"?"VIDEO":"POSTER "+n}</div><h4>${type==="video"?"Video Panduan":"Poster Panduan "+n}</h4><p>Belum dimuat naik.</p></article>`;return `<article class="faq-media-card"><div class="faq-media-preview">${type==="poster"?`<img data-file-key="${esc(x.key)}" alt="${esc(x.title||`Poster ${n}`)}">`:`<video controls preload="metadata" data-faq-video-key="${esc(x.key)}"></video>`}</div><h4>${esc(x.title||`${type==="video"?"Video":"Poster"} Panduan`)}</h4><p>${esc(x.description||"")}</p></article>`}).join("");hydrateStoredImages(pub);await hydrateFaqVideos(pub);
+  if(adm&&adminMode){adm.innerHTML='<div class="section-head-row"><div><h4>Pengurusan Bahan Panduan</h4><div class="field-help">Pentadbir boleh upload/ganti 3 poster dan 1 video serta description.</div></div></div><div class="faq-media-admin-grid">'+[1,2,3,4].map(n=>{const x=faqMediaBySlot(n),type=n===4?"Video":"Poster";return `<div class="faq-media-admin-card"><b>${type} ${n===4?"":n}</b><span>${x?esc(x.fileName||x.title||"Sudah dimuat naik"):"Belum dimuat naik"}</span><div class="actions"><button class="secondary" type="button" onclick="openFaqMediaEditor(${n})">${x?"Edit / Ganti":"Upload"}</button>${x?`<button class="danger" type="button" onclick="deleteFaqMedia(${n})">Padam</button>`:""}</div></div>`}).join("")+'</div>'}
+}
+async function hydrateFaqVideos(root=document){for(const v of root.querySelectorAll("video[data-faq-video-key]")){if(v.dataset.loaded==="1")continue;try{const p=parseSbFileKey(v.dataset.faqVideoKey);if(p&&supabaseClient){const {data,error}=await supabaseClient.storage.from(p.bucket).createSignedUrl(p.path,3600);if(error)throw error;v.src=data.signedUrl;v.preload="none";v.dataset.loaded="1"}else{const blob=await idbGet(v.dataset.faqVideoKey);if(blob){const u=URL.createObjectURL(blob);imageObjectUrls.push(u);v.src=u;v.preload="none";v.dataset.loaded="1"}}}catch{}}}
+function openFaqMediaEditor(slotNo){if(!adminMode)return;const x=faqMediaBySlot(slotNo),isVideo=slotNo===4;$("faqMediaSlot").value=slotNo;$("faqMediaEditTitle").textContent=`${x?"Edit":"Upload"} ${isVideo?"Video":"Poster "+slotNo}`;$("faqMediaTypeLabel").innerHTML=isVideo?"Slot ini menerima <b>1 video</b>.":"Slot ini menerima <b>1 poster imej</b>.";$("faqMediaTitle").value=x?.title||"";$("faqMediaDescription").value=x?.description||"";$("faqMediaFile").value="";$("faqMediaFile").accept=isVideo?"video/mp4,video/webm":"image/*";$("faqMediaFileHelp").textContent=isVideo?"MP4/WebM, maksimum 100 MB.":"JPG/PNG/WebP, maksimum 10 MB.";$("faqMediaEditModal").classList.add("open")}
+async function saveFaqMedia(){
+  if(!adminMode)return;const slotNo=Number($("faqMediaSlot").value),isVideo=slotNo===4,old=faqMediaBySlot(slotNo),file=$("faqMediaFile").files?.[0],btn=$("faqMediaSaveBtn");if(!old&&!file){alert("Pilih fail untuk dimuat naik.");return}
+  try{if(file)validateFiles([file],{maxMb:isVideo?100:10,maxCount:1,types:isVideo?["video/mp4","video/webm"]:["image/"],label:isVideo?"Video":"Poster"})}catch(e){alert(e.message);return}
+  setButtonBusy(btn,true,"Menyimpan...");try{
+    let path=old?parseSbFileKey(old.key)?.path:null,fileName=old?.fileName||"",mime=old?.mimeType||"";
+    if(file){let upload=file;if(!isVideo)upload=await compressImageFile(file,{maxDimension:2000,quality:.86});path=`faq/${slotNo}/${Date.now()}-${cleanFileName(upload.name)}`;await uploadSb("faq-media",path,upload);fileName=upload.name;mime=upload.type;if(old?.key)try{await deleteSbFile(old.key)}catch{}}
+    const payload={slot_no:slotNo,media_type:isVideo?"video":"poster",title:$("faqMediaTitle").value.trim()||null,description:$("faqMediaDescription").value.trim()||null,storage_path:path,file_name:fileName,mime_type:mime,updated_by:currentUserId};
+    const q=await supabaseClient.from("faq_media").upsert(payload,{onConflict:"slot_no"});if(q.error)throw q.error;closeModal("faqMediaEditModal");await loadSupabaseState();alert("Bahan FAQ berjaya disimpan.")
+  }catch(e){alert("Bahan FAQ tidak dapat disimpan: "+(e.message||e))}finally{setButtonBusy(btn,false)}
+}
+async function deleteFaqMedia(slotNo){if(!adminMode||!confirm(`Padam bahan FAQ slot ${slotNo}?`))return;const x=faqMediaBySlot(slotNo);if(!x)return;const q=await supabaseClient.from("faq_media").delete().eq("id",x.id);if(q.error){alert(q.error.message);return}if(x.key)try{await deleteSbFile(x.key)}catch{}await loadSupabaseState()}
+
 // ---------- Email settings ----------
 function saveEmailSettings(){if(!adminMode)return;const admin=$("emailAdminAddress").value.trim().toLowerCase(),url=$("emailWebhookUrl").value.trim();if(admin&&!/^\S+@\S+\.\S+$/.test(admin)){alert("E-mel Pentadbir tidak sah.");return}if(url&&!/^https?:\/\//i.test(url)){alert("Webhook URL perlu bermula dengan http:// atau https://");return}emailSettings={enabled:$("emailEnabled").checked,adminEmail:admin,webhookUrl:url};saveAll();renderEmailSettings();alert("Tetapan e-mel disimpan.")}
 async function sendTestEmail(){if(!adminMode)return;saveEmailSettings();if(!emailSettings.enabled||!emailSettings.webhookUrl||!emailSettings.adminEmail){alert("Aktifkan e-mel dan lengkapkan e-mel Pentadbir serta Webhook URL dahulu.");return}const before=emailLog.length;await dispatchEmail(emailSettings.adminEmail,"Ini ialah e-mel ujian daripada Sistem Mentor-Mentee Rukaiyah HELAA KRK.","test_email");const latest=emailLog[0];alert(latest&&emailLog.length>before&&latest.status==="ok"?"Permintaan e-mel ujian berjaya dihantar ke webhook.":"Permintaan e-mel ujian tidak berjaya. Semak log penghantaran.")}
@@ -1417,7 +1670,7 @@ function refreshOpenBookingMenteeOptions(){
 }
 
 function renderAll(){
-  renderDays();renderSlots();renderMyBookings();renderMentorReports();renderApprovedReports();renderClassArchive();renderLogisticsPage();renderRecycleBin();renderMentees();renderMentorDirectory();fillMaterialSlots();renderMaterials();renderNotifications();if(adminMode)renderAdminAll();refreshIdentity();refreshOpenBookingMenteeOptions()
+  renderDays();renderSlots();renderMyBookings();renderMentorReports();renderApprovedReports();renderClassArchive();renderLogisticsPage();renderRecycleBin();renderMentees();renderMentorDirectory();fillMaterialSlots();renderMaterials();renderNotifications();renderFaqMedia();if(adminMode)renderAdminAll();refreshIdentity();refreshOpenBookingMenteeOptions()
 }
 
 
@@ -1470,7 +1723,7 @@ function mergeMentorProfileRows(rows){
 function mapPublicMentorProfile(r){return {id:r.id,email:"",fullName:r.full_name||"",matric:r.matric_no||"",faculty:r.faculty||"",course:r.course||"",phone:"",strength:r.teaching_strength||"",about:r.about||"",photoKey:r.photo_path?sbFileKey("mentor-photos",r.photo_path):"",subjects:r.subjects||[],levels:r.levels||[],otherSubject:"",publicConsent:true,updatedAt:r.updated_at||""}}
 function mapMentee(r){return {id:r.id,name:r.full_name||r.short_name||"",shortName:r.short_name||"",group:r.group_name,summary:r.description||"",photoKey:r.photo_path?sbFileKey("mentee-photos",r.photo_path):""}}
 function mapSlot(r){return {id:r.id,date:r.class_date,day:scheduleDayName(r.class_date),time:r.time_label,subject:r.subject,group:r.group_name,mode:r.mode||"individual",topic:r.topic||"",excludedMenteeIds:r.excluded_mentee_ids||[]}}
-function mapBooking(r){const s=slotById(r.slot_id);return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:r.mentor_email||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:r.allow_reassignment?"yes":"no",mentorNote:r.mentor_note||"",adminNote:r.admin_note||"",withdrawalReason:r.withdrawal_reason||"",withdrawnBy:r.withdrawn_by||"",withdrawnAt:r.withdrawn_at||"",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at}}
+function mapBooking(r){const s=slotById(r.slot_id);return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:r.mentor_email||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:r.allow_reassignment?"yes":"no",mentorNote:r.mentor_note||"",adminNote:r.admin_note||"",withdrawalReason:r.withdrawal_reason||"",withdrawnBy:r.withdrawn_by||"",withdrawnAt:r.withdrawn_at||"",attendanceStatus:r.attendance_status||"unchecked",attendanceNote:r.attendance_note||"",checkedInAt:r.checked_in_at||null,reportReminderLastAt:r.report_reminder_last_at||null,reportReminderCount:Number(r.report_reminder_count||0),bookingRole:r.booking_role||"mentor",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at}}
 function mapMentorServiceRecord(r){
   return {
     bookingId:r.booking_id,
@@ -1519,7 +1772,7 @@ function mentorServiceRowsForMatric(matric,{allStatuses=false}={}){
 }
 function mapPublicBooking(r){
   const s=slotById(r.slot_id);
-  return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:"no",mentorNote:"",adminNote:"",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at};
+  return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:"no",mentorNote:"",adminNote:"",bookingRole:r.booking_role||"mentor",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at};
 }
 function mapMentorEvaluation(r){return {id:r.id,reportId:r.report_id,bookingId:r.booking_id||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",score:Number(r.score||0),comment:r.comment||"",evaluatedBy:r.evaluated_by||"",createdAt:r.created_at,updatedAt:r.updated_at}}
 function mentorEvaluationForReport(reportId){return mentorEvaluations.find(x=>x.reportId===reportId)||null}
@@ -1536,10 +1789,11 @@ function mapLogisticsEntry(r){return {id:r.id,entryType:r.entry_type||"transport
 function transportModeLabel(mode){return ({own_car:"Kereta Sendiri",carpool:"Car-pool / Tumpang",grab:"Grab / E-hailing",other:"Lain-lain"})[mode]||mode||"-"}
 function logisticsStatusLabel(status){return ({pending:"Menunggu Kelulusan",approved:"Diluluskan",rejected:"Tidak Diluluskan"})[status]||status}
 
+
 async function loadSupabaseState(){
   if(!supabaseClient||supabaseLoading)return;supabaseLoading=true;
   try{
-    const [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh,mev,rb,lg]=await Promise.all([
+    const [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh,mev,rb,lg,fm,al]=await Promise.all([
       supabaseClient.from("profiles").select("*"),
       supabaseClient.from("mentees").select("*").eq("active",true),
       supabaseClient.from("schedule_slots").select("*").eq("active",true),
@@ -1554,9 +1808,11 @@ async function loadSupabaseState(){
       supabaseClient.rpc("mentor_service_history"),
       supabaseClient.from("mentor_evaluations").select("*").order("updated_at",{ascending:false}),
       supabaseClient.from("recycle_bin").select("*").order("deleted_at",{ascending:false}),
-      supabaseClient.from("logistics_entries").select("*").order("created_at",{ascending:false})
+      adminMode?supabaseClient.from("logistics_entries").select("*").order("created_at",{ascending:false}):Promise.resolve({data:[],error:null}),
+      supabaseClient.from("faq_media").select("*").order("slot_no",{ascending:true}),
+      adminMode?supabaseClient.from("admin_audit_log").select("*").order("created_at",{ascending:false}).limit(500):Promise.resolve({data:[],error:null})
     ]);
-    for(const x of [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh,mev,rb,lg])if(x.error)console.warn("Supabase load:",x.error.message);
+    for(const x of [p,m,s,b,r,ra,ma,mf,n,pb,pd,msh,mev,rb,lg,fm,al])if(x.error)console.warn("Supabase load:",x.error.message);
     {
       const ownOrAdmin=(p.data||[]).map(mapProfile);
       const publicProfiles=adminMode?[]:(pd.data||[]).map(mapPublicMentorProfile);
@@ -1566,6 +1822,8 @@ async function loadSupabaseState(){
     mentorEvaluations=(mev.data||[]).map(mapMentorEvaluation);
     recycleBin=(rb.data||[]).map(mapRecycleEntry);
     logisticsEntries=(lg.data||[]).map(mapLogisticsEntry);
+    faqMedia=(fm.data||[]).map(mapFaqMedia);
+    adminAuditLog=(al.data||[]).map(mapAuditLog);
     if(m.data)students=m.data.map(mapMentee);
     if(s.data&&s.data.length){SCHEDULE=s.data.map(mapSlot).sort(scheduleSort);if(!SCHEDULE.some(x=>x.date===selectedDate))selectedDate=SCHEDULE[0]?.date||""}
     if(adminMode){
@@ -1653,17 +1911,31 @@ function refreshIdentity(){const d=adminMode?`Pentadbir • ${userDisplay()}`:us
 
 async function submitBooking(){const sid=$("slotId").value,s=slotById(sid),name=$("mentorName").value.trim().toUpperCase(),studentId=$("studentSelect").value,consent=document.querySelector('input[name="reassignConsent"]:checked')?.value||"no";if(slotHasEnded(s)){alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");closeModal("bookingModal");renderSlots();return}if(!name||name.length<3){alert("Sila tulis NAMA PENUH mentor.");return}if(!studentId){alert("Pilih mentee.");return}if(!currentUserId){alert("Sesi login tidak ditemui. Sila log masuk semula.");return}const capacity=capacityForSlot(s),active=activeApplicationsForSlot(sid).length;if(active>=capacity){alert("Had permohonan untuk slot ini telah dicapai. Sila tunggu sehingga Pentadbir menolak permohonan atau mentor lain menarik diri.");await loadSupabaseState();return}const avail=availableStudents(s);if(!avail.some(x=>x.id===studentId)){alert("Mentee / slot ini tidak lagi tersedia.");await loadSupabaseState();return}const st=studentId==="pksk-pair"?{id:null,name:"Ariana + Fathemah"}:studentById(studentId);const ticket=makeTicket();const {data,error}=await supabaseClient.from("bookings").insert({booking_no:ticket,slot_id:sid,mentor_id:currentUserId,mentor_name:name,mentor_matric:currentMatric,mentor_email:currentEmail,requested_mentee_id:st.id,allow_reassignment:consent==="yes",mentor_note:$("bookingNote").value.trim(),status:"pending"}).select().single();if(error){const msg=String(error.message||"");if(msg.includes("SLOT_ALREADY_ENDED"))alert("Sesi ini telah selesai. Tempahan baharu tidak lagi dibuka.");else if(msg.includes("MENTEE_ALREADY_RESERVED"))alert("Mentee ini baru sahaja dipilih oleh mentor lain yang menghantar lebih awal. Senarai mentee akan dikemas kini.");else if(msg.includes("SLOT_APPLICATION_LIMIT_REACHED"))alert("Had permohonan slot ini telah penuh. Ruang akan dibuka semula apabila ada permohonan ditolak atau ditarik diri.");else if(msg.includes("MENTEE_NOT_AVAILABLE_FOR_SLOT"))alert("Mentee ini telah ditandakan tidak hadir / tidak tersedia untuk slot ini. Sila pilih mentee lain.");else alert("Tempahan tidak berjaya: "+msg);await loadSupabaseState();refreshOpenBookingMenteeOptions();return}closeModal("bookingModal");await pushNotification({audience:"admin",message:`Tempahan baharu ${ticket}: ${name} (${currentMatric}) memohon ${st.name} untuk ${s.subject} ${s.group}.`,linkType:"booking",linkId:data.id});await loadSupabaseState();speakThanks();alert("Tempahan dihantar kepada Pentadbir untuk kelulusan.")}
 async function approveBooking(id){const b=bookings.find(x=>x.id===id),s=slotById(b?.slotId);if(!b||!s)return;const req=b.requestedStudentId==="pksk-pair"?null:b.requestedStudentId;const {error}=await supabaseClient.from("bookings").update({assigned_mentee_id:req,status:"approved",admin_note:null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert("Tidak dapat meluluskan: "+error.message);return}await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} telah DILULUSKAN. Mentee: ${b.requestedStudentName||"Ariana + Fathemah"}.`,linkType:"booking",linkId:id});await loadSupabaseState()}
-async function confirmReassign(){const b=bookings.find(x=>x.id===activeReassignId),sid=$("reassignStudent").value,st=sid==="pksk-pair"?{id:null,name:"Ariana + Fathemah"}:studentById(sid);if(!b||!st)return;const {error}=await supabaseClient.from("bookings").update({assigned_mentee_id:st.id,status:"reassigned",admin_note:$("reassignNote").value.trim(),reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",b.id);if(error){alert("Pertukaran tidak berjaya: "+error.message);return}closeModal("reassignModal");await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} diluluskan dengan mentee: ${st.name}.`,linkType:"booking",linkId:b.id});await loadSupabaseState()}
+async function confirmReassign(){
+  if(!adminMode)return;
+  const b=bookings.find(x=>x.id===activeReassignId),targetSlotId=$("reassignSlot").value,studentId=$("reassignStudent").value,targetSlot=slotById(targetSlotId),st=studentById(studentId);
+  if(!b||!targetSlot||!st){alert("Pilih Tahun/Tingkatan, slot dan mentee sasaran.");return}
+  const conflicts=adminTargetOccurrenceConflicts(targetSlotId,studentId,b.id);
+  if(conflicts.length){const names=conflicts.map(x=>x.mentorName||x.mentorMatric||"Mentor").join(", ");if(!confirm(`${st.name} sedang mempunyai mentor lain pada masa yang sama: ${names}.\n\nPentadbir boleh teruskan untuk tujuan swap / pertukaran. Sistem akan tandakan konflik sehingga tempahan satu lagi disusun semula.\n\nTeruskan?`))return}
+  const note=$("reassignNote").value.trim();
+  const {data,error}=await supabaseClient.rpc("admin_reassign_booking_override",{p_booking_id:b.id,p_target_slot_id:targetSlotId,p_target_mentee_id:studentId,p_admin_note:note||null});
+  if(error){const msg=String(error.message||"");if(msg.includes("REPORT_ALREADY_EXISTS_REASSIGN_NOT_ALLOWED"))alert("Tempahan ini sudah mempunyai laporan. Pengaturan tidak boleh diubah selepas laporan diwujudkan.");else alert("Pertukaran tidak berjaya: "+msg);return}
+  closeModal("reassignModal");
+  await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} telah DISUSUN SEMULA oleh Pentadbir. Mentee: ${st.name}. Slot: ${targetSlot.day}, ${fmtDate(targetSlot.date)} • ${targetSlot.time}.${note?` Catatan: ${note}`:""}`,linkType:"booking",linkId:b.id});
+  await loadSupabaseState();
+  const conflictCount=Number(data?.conflict_count||0);
+  if(conflictCount>0)alert(`Pertukaran berjaya.\n\nPERINGATAN: ${st.name} kini mempunyai lebih daripada seorang mentor pada masa yang sama. Sila susun semula tempahan yang satu lagi sehingga amaran konflik hilang.`);else alert("Pertukaran mentor-mentee berjaya.")
+}
 async function rejectBooking(id){const b=bookings.find(x=>x.id===id),n=prompt("Sebab tempahan tidak diluluskan:","");if(!b||n===null)return;const {error}=await supabaseClient.from("bookings").update({status:"rejected",admin_note:n,assigned_mentee_id:null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert(error.message);return}await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} tidak diluluskan.${n?` Catatan: ${n}`:""}`,linkType:"booking",linkId:id});await loadSupabaseState()}
 async function revertBooking(id){const b=bookings.find(x=>x.id===id);if(!b||!confirm("Buka semula tempahan ini?"))return;const {error}=await supabaseClient.from("bookings").update({status:"reverted",assigned_mentee_id:null,admin_note:"Kelulusan dibuka semula oleh Pentadbir."}).eq("id",id);if(error){alert(error.message);return}await pushNotification({userId:b.userId,message:`Kelulusan tempahan ${b.ticket} telah dibuka semula.`,linkType:"booking",linkId:id});await loadSupabaseState()}
 async function restorePending(id){const b=bookings.find(x=>x.id===id);if(!b)return;const {error}=await supabaseClient.from("bookings").update({status:"pending"}).eq("id",id);if(error){alert(error.message);return}await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} dikembalikan ke status Menunggu Semakan.`,linkType:"booking",linkId:id});await loadSupabaseState()}
 async function deleteBookingRecord(id){const b=bookings.find(x=>x.id===id);if(!b||!confirm(`Padam rekod tempahan ${b.ticket}?`))return;const {error}=await supabaseClient.from("bookings").delete().eq("id",id);if(error){alert(error.message);return}await loadSupabaseState()}
 async function adminEditBooking(id){const b=bookings.find(x=>x.id===id);if(!b)return;const name=prompt("Nama penuh mentor:",b.mentorName||"");if(name===null)return;const email=prompt("E-mel mentor:",b.email||"");if(email===null)return;const matric=prompt("Nombor matrik:",b.mentorMatric||"");if(matric===null)return;const note=prompt("Catatan mentor / rekod:",b.mentorNote||"");if(note===null)return;const {error}=await supabaseClient.from("bookings").update({mentor_name:name.trim().toUpperCase(),mentor_email:email.trim().toLowerCase(),mentor_matric:matric.trim(),mentor_note:note.trim()}).eq("id",id);if(error){alert(error.message);return}await loadSupabaseState();alert("Rekod tempahan berjaya disunting.")}
 
-async function saveMenteeProfile(){if(!adminMode)return;let id=$("menteeEditId").value.trim(),name=$("menteeEditName").value.trim(),group=$("menteeEditGroup").value,summary=$("menteeEditSummary").value.trim();if(!name||!group){alert("Nama dan Tahun/Tingkatan diperlukan.");return}let rec;if(id){const u=await supabaseClient.from("mentees").update({full_name:name,group_name:group,description:summary}).eq("id",id).select().single();if(u.error){alert(u.error.message);return}rec=u.data}else{const i=await supabaseClient.from("mentees").insert({short_name:name,full_name:name,group_name:group,description:summary,created_by:currentUserId}).select().single();if(i.error){alert(i.error.message);return}rec=i.data;id=rec.id}const f=$("menteeEditPhoto").files?.[0];if(f){const path=`mentees/${id}/${Date.now()}-${cleanFileName(f.name)}`;try{await uploadSb("mentee-photos",path,f);const u=await supabaseClient.from("mentees").update({photo_path:path}).eq("id",id);if(u.error)throw u.error}catch(e){alert("Maklumat disimpan tetapi gambar gagal dimuat naik: "+e.message)}}closeModal("menteeEditModal");await loadSupabaseState();alert("Maklumat mentee berjaya disimpan.")}
+async function saveMenteeProfile(){if(!adminMode)return;let id=$("menteeEditId").value.trim(),name=$("menteeEditName").value.trim(),group=$("menteeEditGroup").value,summary=$("menteeEditSummary").value.trim();if(!name||!group){alert("Nama dan Tahun/Tingkatan diperlukan.");return}let rec;if(id){const u=await supabaseClient.from("mentees").update({full_name:name,group_name:group,description:summary}).eq("id",id).select().single();if(u.error){alert(u.error.message);return}rec=u.data}else{const i=await supabaseClient.from("mentees").insert({short_name:name,full_name:name,group_name:group,description:summary,created_by:currentUserId}).select().single();if(i.error){alert(i.error.message);return}rec=i.data;id=rec.id}let f=$("menteeEditPhoto").files?.[0];if(f){try{validateFiles([f],{maxMb:10,maxCount:1,types:["image/"],label:"Gambar mentee"});f=await compressImageFile(f,{maxDimension:1600,quality:.84});const path=`mentees/${id}/${Date.now()}-${cleanFileName(f.name)}`;await uploadSb("mentee-photos",path,f);const u=await supabaseClient.from("mentees").update({photo_path:path}).eq("id",id);if(u.error)throw u.error}catch(e){alert("Maklumat disimpan tetapi gambar gagal dimuat naik: "+e.message)}}closeModal("menteeEditModal");await loadSupabaseState();alert("Maklumat mentee berjaya disimpan.")}
 async function deleteMentee(id){const s=studentById(id);if(!adminMode||!s||!confirm(`Padam mentee ${s.name}?`))return;const {error}=await supabaseClient.from("mentees").delete().eq("id",id);if(error){alert("Tidak dapat dipadam. Mungkin mentee masih mempunyai rekod tempahan. "+error.message);return}await loadSupabaseState()}
 
-async function saveMentorProfile(){const fullName=$("mentorProfileName").value.trim().toUpperCase(),matric=$("mentorProfileMatric").value.trim().toUpperCase(),faculty=$("mentorProfileFaculty").value.trim(),course=$("mentorProfileCourse").value.trim(),about=$("mentorProfileAbout").value.trim(),subjects=[...document.querySelectorAll('input[name="mentorSubject"]:checked')].map(x=>x.value),levels=[...document.querySelectorAll('input[name="mentorLevel"]:checked')].map(x=>x.value);if(!fullName||!matric||!faculty||!course||!about||!subjects.length||!levels.length){alert("Lengkapkan semua ruangan wajib.");return}if(wordCount(about)>50){alert("Penerangan diri maksimum 50 patah perkataan.");return}let photoPath=null;const f=$("mentorProfilePhoto").files?.[0];if(f){photoPath=`${currentUserId}/profile/${Date.now()}-${cleanFileName(f.name)}`;try{await uploadSb("mentor-photos",photoPath,f)}catch(e){alert("Gambar gagal dimuat naik: "+e.message);return}}const publicConsent=!!$("mentorProfilePublicConsent")?.checked;const payload={email:currentEmail,matric_no:matric,full_name:fullName,faculty,course,phone:$("mentorProfilePhone").value.trim(),teaching_strength:$("mentorProfileStrength").value.trim(),about,subjects,levels,public_display_consent:publicConsent};if(photoPath)payload.photo_path=photoPath;const {error}=await supabaseClient.from("profiles").update(payload).eq("id",currentUserId);if(error){alert(error.message);return}
+async function saveMentorProfile(){const fullName=$("mentorProfileName").value.trim().toUpperCase(),matric=$("mentorProfileMatric").value.trim().toUpperCase(),faculty=$("mentorProfileFaculty").value.trim(),course=$("mentorProfileCourse").value.trim(),about=$("mentorProfileAbout").value.trim(),subjects=[...document.querySelectorAll('input[name="mentorSubject"]:checked')].map(x=>x.value),levels=[...document.querySelectorAll('input[name="mentorLevel"]:checked')].map(x=>x.value);if(!fullName||!matric||!faculty||!course||!about||!subjects.length||!levels.length){alert("Lengkapkan semua ruangan wajib.");return}if(wordCount(about)>50){alert("Penerangan diri maksimum 50 patah perkataan.");return}let photoPath=null;let f=$("mentorProfilePhoto").files?.[0];if(f){try{validateFiles([f],{maxMb:10,maxCount:1,types:["image/"],label:"Gambar mentor"});f=await compressImageFile(f,{maxDimension:1600,quality:.84});photoPath=`${currentUserId}/profile/${Date.now()}-${cleanFileName(f.name)}`;await uploadSb("mentor-photos",photoPath,f)}catch(e){alert("Gambar gagal dimuat naik: "+e.message);return}}const publicConsent=!!$("mentorProfilePublicConsent")?.checked;const payload={email:currentEmail,matric_no:matric,full_name:fullName,faculty,course,phone:$("mentorProfilePhone").value.trim(),teaching_strength:$("mentorProfileStrength").value.trim(),about,subjects,levels,public_display_consent:publicConsent};if(photoPath)payload.photo_path=photoPath;const {error}=await supabaseClient.from("profiles").update(payload).eq("id",currentUserId);if(error){alert(error.message);return}
 const {error:syncError}=await supabaseClient.rpc("sync_my_mentor_profile",{p_full_name:fullName,p_matric:matric,p_faculty:faculty,p_course:course,p_phone:payload.phone,p_teaching_strength:payload.teaching_strength,p_about:about,p_subjects:subjects,p_levels:levels,p_public_display_consent:publicConsent,p_photo_path:photoPath});
 if(syncError){console.warn("Profile sync:",syncError.message)}
 currentMatric=matric;storageSet(KEYS.sessionMatric,matric);await loadSupabaseState();speakThanks();alert("Profil Mentor berjaya disimpan.")}
@@ -1683,6 +1955,12 @@ async function saveMaterialSet(){
   const teachingFiles=Array.from($("materialFiles").files||[]);
   const schemeFiles=Array.from($("schemeFiles").files||[]);
   const noteFiles=Array.from($("noteFiles").files||[]);
+  const materialSaveBtn=$("materialSaveBtn");
+  try{
+    validateFiles(teachingFiles,{maxMb:25,maxCount:15,label:"Bahan Mengajar"});
+    validateFiles(schemeFiles,{maxMb:25,maxCount:15,label:"Skema Jawapan"});
+    validateFiles(noteFiles,{maxMb:25,maxCount:15,label:"Nota / Lampiran"});
+  }catch(e){alert(e.message||e);return}
   const existingCount=old
     ? materialFilesNormalized(old,"material").length
       + materialFilesNormalized(old,"scheme").length
@@ -1697,6 +1975,7 @@ async function saveMaterialSet(){
   let mid=old?.id||null;
   let createdNew=false;
   const uploaded=[];
+  setButtonBusy(materialSaveBtn,true,"Memuat naik...");
 
   try{
     if(mid){
@@ -1779,13 +2058,41 @@ async function saveMaterialSet(){
     }
     await loadSupabaseState().catch(()=>{});
     alert(`Bahan tidak disimpan kerana upload gagal: ${e?.message||e}`);
+  }finally{
+    setButtonBusy(materialSaveBtn,false);
   }
 }
 async function removeMaterialFile(id,kind,key){const p=parseSbFileKey(key),m=materials.find(x=>x.id===id);if(!p||!m||!confirm("Buang fail ini?"))return;const all=[...materialFilesNormalized(m,"material"),...materialFilesNormalized(m,"scheme"),...materialFilesNormalized(m,"note")],f=all.find(x=>x.key===key);try{await deleteSbFile(key);if(f?.id)await supabaseClient.from("material_files").delete().eq("id",f.id);await loadSupabaseState()}catch(e){alert(e.message)}}
 async function deleteMaterial(id){if(!confirm("Padam rekod bahan ini?"))return;const m=materials.find(x=>x.id===id);if(m){for(const f of [...materialFilesNormalized(m,"material"),...materialFilesNormalized(m,"scheme"),...materialFilesNormalized(m,"note")]){try{await deleteSbFile(f.key)}catch{}}}const {error}=await supabaseClient.from("materials").delete().eq("id",id);if(error){alert(error.message);return}cancelMaterialEdit();await loadSupabaseState()}
 
-async function saveReport(){const bookingId=$("reportBookingId").value,b=bookings.find(x=>x.id===bookingId);if(!b)return;const fields={taught:$("reportTaught").value.trim(),progress:$("reportProgress").value.trim(),reaction:$("reportReaction").value.trim(),attention:$("reportAttention").value.trim(),next_session:$("reportNext").value.trim()};if(!fields.taught||!fields.progress||!fields.reaction||!fields.attention||reportRatings.some(v=>v<1)){alert("Lengkapkan laporan dan semua penilaian bintang.");return}let r=reports.find(x=>x.bookingId===bookingId),rid=r?.id;const payload={booking_id:bookingId,mentor_id:currentUserId,...fields,rating_focus:reportRatings[0],rating_understanding:reportRatings[1],rating_communication:reportRatings[2],rating_motivation:reportRatings[3],rating_rukaiyah:reportRatings[4],status:"pending",admin_feedback:null,submitted_at:new Date().toISOString()};if(rid){const u=await supabaseClient.from("reports").update(payload).eq("id",rid);if(u.error){alert(u.error.message);return}}else{const i=await supabaseClient.from("reports").insert(payload).select().single();if(i.error){alert(i.error.message);return}rid=i.data.id}for(const f of [...$("reportFiles").files]){const path=`${currentUserId}/${rid}/${Date.now()}-${uid()}-${cleanFileName(f.name)}`;try{await uploadSb("report-files",path,f);const q=await supabaseClient.from("report_attachments").insert({report_id:rid,file_name:f.name,storage_path:path,mime_type:f.type||"application/octet-stream",is_image:isImageType(f.type,f.name)});if(q.error)throw q.error}catch(e){alert(`Laporan disimpan tetapi fail ${f.name} gagal: ${e.message}`)}}const {data:imgs}=await supabaseClient.from("report_attachments").select("id").eq("report_id",rid).eq("is_image",true);if(!imgs?.length){alert("Sekurang-kurangnya satu gambar aktiviti diperlukan. Sila tambah gambar dan hantar semula.");return}closeModal("reportModal");await pushNotification({audience:"admin",message:`Laporan dihantar oleh ${b.mentorName} (${b.mentorMatric}) untuk ${b.ticket}.`,linkType:"report",linkId:rid});await loadSupabaseState();speakThanks();alert("Laporan dihantar untuk semakan Pentadbir.")}
-async function reportStatusUpdate(id,status,feedback=""){const r=reports.find(x=>x.id===id),b=bookings.find(x=>x.id===r?.bookingId);if(!r||!b)return;const {error}=await supabaseClient.from("reports").update({status,admin_feedback:feedback||null,reviewed_by:currentUserId,reviewed_at:new Date().toISOString()}).eq("id",id);if(error){alert(error.message);return}await pushNotification({userId:b.userId,message:status==="approved"?`Laporan bagi ${b.ticket} telah DILULUSKAN.`:status==="returned"?`Laporan bagi ${b.ticket} dipulangkan untuk pembetulan. ${feedback}`:`Laporan bagi ${b.ticket} tidak diluluskan. ${feedback}`,linkType:"report",linkId:id});await loadSupabaseState()}
+async function saveReport(){
+  if(savingReport)return;
+  const bookingId=$("reportBookingId").value,b=bookings.find(x=>x.id===bookingId);if(!b)return;
+  const fields={taught:$("reportTaught").value.trim(),progress:$("reportProgress").value.trim(),reaction:$("reportReaction").value.trim(),attention:$("reportAttention").value.trim(),next_session:$("reportNext").value.trim()};
+  if(!fields.taught||!fields.progress||!fields.reaction||!fields.attention||reportRatings.some(v=>v<1)){alert("Lengkapkan soalan 1 hingga 4 dan semua lima penilaian bintang.");return}
+  let files;try{files=validateFiles($("reportFiles").files,{maxMb:15,maxCount:12,label:"Lampiran laporan"})}catch(e){alert(e.message);return}
+  savingReport=true;const submitBtn=$("reportModal")?.querySelector('.primary[onclick="saveReport()"]');setButtonBusy(submitBtn,true,"Menghantar...");
+  try{
+    let r=reports.find(x=>x.bookingId===bookingId),rid=r?.id;
+    const payload={booking_id:bookingId,mentor_id:currentUserId,...fields,rating_focus:reportRatings[0],rating_understanding:reportRatings[1],rating_communication:reportRatings[2],rating_motivation:reportRatings[3],rating_rukaiyah:reportRatings[4],status:"pending",admin_feedback:null,submitted_at:new Date().toISOString()};
+    if(rid){const u=await supabaseClient.from("reports").update(payload).eq("id",rid);if(u.error)throw u.error}
+    else{
+      const i=await supabaseClient.from("reports").insert(payload).select().single();
+      if(i.error){
+        if(String(i.error.message||"").includes("reports_booking_id_key")){
+          const existing=await supabaseClient.from("reports").select("id").eq("booking_id",bookingId).maybeSingle();
+          if(existing.error||!existing.data?.id)throw i.error;rid=existing.data.id;const u=await supabaseClient.from("reports").update(payload).eq("id",rid);if(u.error)throw u.error;
+        }else throw i.error;
+      }else rid=i.data.id;
+    }
+    for(let f of files){
+      f=await compressImageFile(f);const path=`${currentUserId}/${rid}/${Date.now()}-${uid()}-${cleanFileName(f.name)}`;await uploadSb("report-files",path,f);const q=await supabaseClient.from("report_attachments").insert({report_id:rid,file_name:f.name,storage_path:path,mime_type:f.type||"application/octet-stream",is_image:isImageType(f.type,f.name)});if(q.error)throw q.error;
+    }
+    const {data:imgs,error:imgErr}=await supabaseClient.from("report_attachments").select("id").eq("report_id",rid).eq("is_image",true);if(imgErr)throw imgErr;if(!imgs?.length){alert("Sekurang-kurangnya satu gambar aktiviti diperlukan. Laporan telah disimpan sebagai pending tetapi sila tambah gambar dan hantar semula.");await loadSupabaseState();return}
+    clearReportDraftLocal(bookingId);closeModal("reportModal");await pushNotification({audience:"admin",message:`Laporan dihantar oleh ${b.mentorName} (${b.mentorMatric}) untuk ${b.ticket}.`,linkType:"report",linkId:rid});await loadSupabaseState();speakThanks();alert("Laporan dihantar untuk semakan Pentadbir.")
+  }catch(e){alert("Laporan tidak dapat dihantar: "+(e?.message||e))}
+  finally{savingReport=false;setButtonBusy(submitBtn,false)}
+}
 async function approveReport(id){await reportStatusUpdate(id,"approved")}
 async function returnReport(id){const n=prompt("Nyatakan pembetulan yang diperlukan:","");if(n)await reportStatusUpdate(id,"returned",n)}
 async function rejectReport(id){const n=prompt("Sebab laporan tidak diluluskan:","");if(n)await reportStatusUpdate(id,"rejected",n)}
@@ -1840,13 +2147,13 @@ async function deleteMentorEvaluation(){
 }
 async function markAllNotificationsRead(){const ids=currentNotifications().filter(n=>!n.read).map(n=>n.id);if(ids.length)await supabaseClient.from("notifications").update({is_read:true}).in("id",ids);await loadSupabaseState()}
 async function markAllAdminNotificationsRead(){const ids=notifications.filter(n=>n.target==="*admin*"&&!n.read).map(n=>n.id);if(ids.length)await supabaseClient.from("notifications").update({is_read:true}).in("id",ids);await loadSupabaseState()}
-async function openNotification(id){const n=notifications.find(x=>x.id===id);if(!n)return;await supabaseClient.from("notifications").update({is_read:true}).eq("id",id);n.read=true;renderNotifications();$("notificationPopover")?.classList.remove("open");const bookingId=notificationBookingId(n);if(bookingId){notificationFocusBookingId=bookingId;if(adminMode){activeReviewBookingId=bookingId;if($("statusFilter"))$("statusFilter").value="all";if($("adminSearch"))$("adminSearch").value="";switchTab("admin");switchAdminPane("bookings");renderAdminBookings();setTimeout(()=>document.getElementById(`admin-booking-${bookingId}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80)}else{setMentorBookingFilter("all");switchTab("mybooking");renderMyBookings()}return}if(n.event==="report"){if(adminMode){switchTab("admin");switchAdminPane("adminReports")}else switchTab("reports");return}if(n.event==="logistics"){switchTab("logistics");return}}
+async function openNotification(id){const n=notifications.find(x=>x.id===id);if(!n)return;await supabaseClient.from("notifications").update({is_read:true}).eq("id",id);n.read=true;renderNotifications();$("notificationPopover")?.classList.remove("open");const bookingId=notificationBookingId(n);if(bookingId){notificationFocusBookingId=bookingId;if(adminMode){activeReviewBookingId=bookingId;if($("statusFilter"))$("statusFilter").value="all";if($("adminSearch"))$("adminSearch").value="";switchTab("admin");switchAdminPane("bookings");renderAdminBookings();setTimeout(()=>document.getElementById(`admin-booking-${bookingId}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80)}else{setMentorBookingFilter("all");switchTab("mybooking");renderMyBookings()}return}if(n.event==="report"||n.event==="report_missing"){if(adminMode){if(n.event==="report_missing")switchTab("classArchive");else{switchTab("admin");switchAdminPane("adminReports")}}else switchTab("reports");return}if(n.event==="logistics"){switchTab("logistics");return}}
 
 
 let mentorReminderHeartbeat=null;
 async function runMentorReminderHeartbeat(){
   if(!supabaseClient||!currentUserId)return;
-  try{await supabaseClient.rpc("send_mentor_slot_reminders")}catch(err){console.warn("Reminder heartbeat:",err?.message||err)}
+  try{await Promise.allSettled([supabaseClient.rpc("send_mentor_slot_reminders"),supabaseClient.rpc("send_missing_report_reminders")])}catch(err){console.warn("Reminder heartbeat:",err?.message||err)}
 }
 function setupMentorReminderHeartbeat(){
   if(mentorReminderHeartbeat)return;
@@ -1854,7 +2161,8 @@ function setupMentorReminderHeartbeat(){
   mentorReminderHeartbeat=setInterval(runMentorReminderHeartbeat,60000);
 }
 
-function setupRealtime(){setupMentorReminderHeartbeat();if(!supabaseClient||realtimeChannel)return;const refresh=()=>loadSupabaseState();realtimeChannel=supabaseClient.channel("helaa-rukaiyah-live").on("postgres_changes",{event:"*",schema:"public",table:"bookings"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"notifications"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"schedule_slots"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"materials"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"material_files"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentees"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"profiles"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"reports"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentor_evaluations"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"logistics_entries"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"recycle_bin"},refresh).subscribe()}
+function scheduleStateRefresh(){clearTimeout(realtimeRefreshTimer);realtimeRefreshTimer=setTimeout(()=>loadSupabaseState(),650)}
+function setupRealtime(){setupMentorReminderHeartbeat();if(!supabaseClient||realtimeChannel)return;const refresh=()=>scheduleStateRefresh();realtimeChannel=supabaseClient.channel("helaa-rukaiyah-live").on("postgres_changes",{event:"*",schema:"public",table:"bookings"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"notifications"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"schedule_slots"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"materials"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"material_files"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentees"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"profiles"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"reports"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"mentor_evaluations"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"logistics_entries"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"recycle_bin"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"faq_media"},refresh).on("postgres_changes",{event:"*",schema:"public",table:"admin_audit_log"},refresh).subscribe()}
 
 async function init(){
   try{
@@ -1924,9 +2232,9 @@ Object.assign(window,{
   saveScheduleItem,cancelScheduleEdit,editScheduleItem,deleteScheduleItem,
   saveMaterialSet,cancelMaterialEdit,editMaterial,deleteMaterial,removeMaterialFile,
   openMenteeCreate,openMenteeEdit,saveMenteeProfile,deleteMentee,
-  approveBooking,openReassign,confirmReassign,rejectBooking,revertBooking,restorePending,withdrawBooking,adminWithdrawBooking,adminEditBooking,deleteBookingRecord,
+  approveBooking,openReassign,confirmReassign,renderAdminReassignSlots,renderAdminReassignStudents,renderAdminReassignConflict,rejectBooking,revertBooking,restorePending,withdrawBooking,adminWithdrawBooking,adminEditBooking,deleteBookingRecord,
   approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openArchiveReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation,
-  renderRecycleBin,renderLogisticsPage,renderLogisticsParticipants,updateLogisticsVehicleFields,updateLogisticsParticipantCount,submitAdditionalMaterialEntry,submitLogisticsEntry,approveLogistics,rejectLogistics,adminEditMentorName,
+  renderRecycleBin,renderLogisticsPage,renderLogisticsParticipants,updateLogisticsVehicleFields,updateLogisticsParticipantCount,submitAdditionalMaterialEntry,submitLogisticsEntry,approveLogistics,rejectLogistics,adminEditMentorName,printMentorProfile,printMentorRecognition,printClassArchive,remindMissingReport,mentorCheckIn,adminSetAttendance,openPkskHostReport,renderGlobalSearchResults,openGlobalSearchResult,resetArchivePagination,loadMoreArchive,resetArchiveFilters,openFaqMediaEditor,saveFaqMedia,deleteFaqMedia,renderAdminActionCenter,exportAdminCsv,renderAdminAuditLog,resetAdminBookingFilters,
   renderAdminMentorLive,setAdminLiveDate,shiftAdminLiveDate
 });
 
