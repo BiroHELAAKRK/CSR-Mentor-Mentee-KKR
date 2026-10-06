@@ -503,7 +503,6 @@ function logout(){
 function toggleSidebar(open){$("sidebar").classList.toggle("open",!!open);$("sidebarBackdrop").classList.toggle("open",!!open)}
 function closeModal(id){$(id).classList.remove("open")}
 function switchTab(id){
-  if(id==="mentorRecognition"&&!adminMode){alert("Paparan Pengecaman Mentor hanya untuk Pentadbir.");return}
   if(adminMode&&id==="mybooking"){openAdminPane("bookings");return}
   document.querySelectorAll(".sidebar-nav button[data-tab]").forEach(b=>b.classList.toggle("active",b.dataset.tab===id));
   document.querySelectorAll(".section").forEach(s=>s.classList.toggle("active",s.id===id));toggleSidebar(false);$("notificationPopover")?.classList.remove("open");
@@ -722,7 +721,7 @@ function adminBookingConflictInfo(b){
   return others.length?{studentName:bookingStudentName(b),others,slot}:null;
 }
 function adminReassignGroups(){
-  return [...new Set(STUDENTS.map(s=>s.group).filter(Boolean))]
+  return [...new Set(students.map(s=>s.group).filter(Boolean))]
     .sort((a,b)=>educationGroupRank(a)-educationGroupRank(b)||String(a).localeCompare(String(b),"ms"));
 }
 function adminReassignSlotsForGroup(group,booking){
@@ -1114,17 +1113,22 @@ function saveReportDraftLocal(){
 }
 function scheduleReportDraftSave(){clearTimeout(reportDraftTimer);reportDraftTimer=setTimeout(saveReportDraftLocal,700)}
 function clearReportDraftLocal(bookingId){storageRemove(reportDraftKey(bookingId));const el=$("reportDraftStatus");if(el)el.textContent="Laporan telah dihantar. Draf tempatan dibersihkan."}
+function isFeloYaminIdentity(){return String(currentMatric||"").trim().toUpperCase()==="P159289"}
+function activeNormalYaminPkskBooking(slotId){return bookings.find(b=>b.slotId===slotId&&b.bookingRole!=="pksk_host"&&["pending","approved","reassigned"].includes(b.status)&&String(b.mentorMatric||"").trim().toUpperCase()==="P159289")||null}
+function visiblePkskBookings(slotId){const active=bookings.filter(b=>b.slotId===slotId&&["pending","approved","reassigned"].includes(b.status));const normalYamin=active.some(b=>b.bookingRole!=="pksk_host"&&String(b.mentorMatric||"").trim().toUpperCase()==="P159289");return active.filter(b=>!(normalYamin&&b.bookingRole==="pksk_host"&&String(b.mentorMatric||"").trim().toUpperCase()==="P159289"))}
 async function openPkskHostReport(slotId){
-  if(!adminMode){alert("Fungsi laporan Felo Yamin hanya melalui akaun Pentadbir.");return}
+  if(!isFeloYaminIdentity()){alert("Laporan Felo Yamin hanya boleh dibuka oleh akaun P159289.");return}
   const {data,error}=await supabaseClient.rpc("ensure_pksk_host_booking",{p_slot_id:slotId});if(error){alert("Tidak dapat membuka laporan PKSK Felo Yamin: "+error.message);return}
   await loadSupabaseState();const bid=typeof data==="string"?data:data?.booking_id||data;const b=bookings.find(x=>String(x.id)===String(bid));if(!b){alert("Rekod laporan PKSK belum dapat dimuatkan. Cuba sekali lagi.");return}openReport(b.id)
 }
 function renderMentorReports(){
-  const own=bookings.filter(b=>String(b.email||"").toLowerCase()===currentEmail.toLowerCase()&&isFinalStatus(b));
+  const own=bookings.filter(b=>((String(b.email||"").toLowerCase()===currentEmail.toLowerCase())||(String(b.mentorMatric||"").toUpperCase()===String(currentMatric||"").toUpperCase()))&&isFinalStatus(b));
   const cards=own.map(b=>({kind:"booking",b,s:slotById(b.slotId)}));
-  if(adminMode&&/YAMIN/i.test(currentMentorProfile()?.fullName||"")){
+  if(isFeloYaminIdentity()){
     for(const s of SCHEDULE.filter(s=>s.mode==="pksk")){
-      const host=bookings.find(b=>b.slotId===s.id&&b.bookingRole==="pksk_host"&&String(b.email||"").toLowerCase()===currentEmail.toLowerCase());
+      const normalYamin=activeNormalYaminPkskBooking(s.id);
+      if(normalYamin){continue}
+      const host=bookings.find(b=>b.slotId===s.id&&b.bookingRole==="pksk_host"&&String(b.mentorMatric||"").trim().toUpperCase()==="P159289"&&isFinalStatus(b));
       if(host){if(!cards.some(x=>x.b?.id===host.id))cards.push({kind:"booking",b:host,s})}
       else cards.push({kind:"pksk_host_available",s});
     }
@@ -1446,52 +1450,80 @@ function renderRecycleBin(){
 
 
 function attendanceLabel(status){return ({present:"Hadir",absent:"Tidak Hadir",replacement:"Diganti",cancelled:"Dibatalkan",withdrawn:"Tarik Diri",unchecked:"Belum Ditanda"})[status||"unchecked"]||status||"Belum Ditanda"}
+function bookingBelongsToCurrentMentor(b){if(!b)return false;const m=String(currentMatric||"").trim().toUpperCase(),e=String(currentEmail||"").trim().toLowerCase();return (!!m&&String(b.mentorMatric||"").trim().toUpperCase()===m)|| (!!e&&String(b.email||"").trim().toLowerCase()===e)}
+function replacementPhoneForBooking(b){if(!b?.replacementName)return"belum dinyatakan";const p=profileByMatric(b.replacementMatric)||profileByEmail(b.replacementEmail);return p?.phone?.trim()||"belum dinyatakan"}
 async function mentorCheckIn(bookingId){
   const b=bookings.find(x=>x.id===bookingId);if(!b)return;if(!confirm(`Rekodkan bahawa anda sudah tiba untuk sesi ${b.ticket}?`))return;
   const {error}=await supabaseClient.rpc("mentor_check_in",{p_booking_id:bookingId});if(error){alert("Check-in tidak berjaya: "+error.message);return}await loadSupabaseState();alert("Check-in berjaya direkodkan.")
 }
+function openReplacementAttendance(bookingId){
+  if(!adminMode)return;const b=bookings.find(x=>x.id===bookingId),s=slotById(b?.slotId);if(!b)return;
+  $("replacementBookingId").value=bookingId;
+  $("replacementBookingSummary").innerHTML=`<b>Mentor asal:</b> ${esc(b.mentorName)} (${esc(b.mentorMatric||"-")})<br>${s?`${esc(s.day)}, ${fmtDate(s.date)} • ${esc(s.time)} • ${esc(s.subject)} • ${esc(s.group)}`:""}<br>Mentee: <b>${esc(bookingStudentName(b))}</b>`;
+  $("replacementReason").value=b.replacementReason||b.attendanceNote||"";
+  $("replacementName").value=b.replacementName||"";
+  $("replacementEmail").value=b.replacementEmail||"";
+  $("replacementMatric").value=b.replacementMatric||"";
+  $("replacementMentorModal").classList.add("open")
+}
+function cancelReplacementAttendance(){closeModal("replacementMentorModal");renderAdminMentorLive()}
+async function confirmReplacementAttendance(){
+  if(!adminMode)return;const bookingId=$("replacementBookingId").value,name=$("replacementName").value.trim().toUpperCase(),email=$("replacementEmail").value.trim().toLowerCase(),matric=$("replacementMatric").value.trim().toUpperCase(),reason=$("replacementReason").value.trim();
+  if(!reason||name.length<3||!email||!matric){alert("Lengkapkan sebab, nama penuh, e-mel dan nombor matrik mentor pengganti.");return}
+  if(!/^\S+@\S+\.\S+$/.test(email)){alert("E-mel mentor pengganti tidak sah.");return}
+  const {error}=await supabaseClient.rpc("admin_set_booking_replacement",{p_booking_id:bookingId,p_reason:reason,p_replacement_name:name,p_replacement_email:email,p_replacement_matric:matric});
+  if(error){alert("Rekod pengganti tidak dapat disimpan: "+error.message);return}
+  closeModal("replacementMentorModal");await loadSupabaseState();alert("Mentor pengganti berjaya direkodkan sebagai Hadir.")
+}
 async function adminSetAttendance(bookingId,status){
   if(!adminMode)return;const b=bookings.find(x=>x.id===bookingId);if(!b)return;
-  const note=status==="present"?"":prompt(`Catatan kehadiran untuk ${b.mentorName} (${attendanceLabel(status)}):`,b.attendanceNote||"");if(note===null&&status!=="present")return;
-  const {error}=await supabaseClient.rpc("admin_set_booking_attendance",{p_booking_id:bookingId,p_status:status,p_note:(note||"").trim()||null});if(error){alert(error.message);return}await loadSupabaseState()
+  if(status==="replacement"){openReplacementAttendance(bookingId);return}
+  const note=status==="present"?"":prompt(`Catatan kehadiran untuk ${b.mentorName} (${attendanceLabel(status)}):`,b.attendanceNote||"");if(note===null&&status!=="present"){renderAdminMentorLive();return}
+  const {error}=await supabaseClient.rpc("admin_set_booking_attendance",{p_booking_id:bookingId,p_status:status,p_note:(note||"").trim()||null});if(error){alert(error.message);renderAdminMentorLive();return}await loadSupabaseState()
 }
 async function remindMissingReport(bookingId){
   if(!adminMode)return;const b=bookings.find(x=>x.id===bookingId);if(!b)return;
   if(!confirm(`Hantar peringatan laporan belum dihantar kepada ${b.mentorName}?`))return;
   const {data,error}=await supabaseClient.rpc("admin_remind_missing_report",{p_booking_id:bookingId});if(error){alert(error.message);return}await loadSupabaseState();alert(data?.message||"Peringatan telah dihantar.")
 }
-// ---------- Admin live mentor identification ----------
+// ---------- Mentor identification / live attendance ----------
 function adminLiveDates(){return [...new Set(SCHEDULE.map(s=>s.date).filter(Boolean))].sort()}
 function ensureAdminLiveDate(){const dates=adminLiveDates();if(!dates.length){adminLiveDate="";return}if(!adminLiveDate||!dates.includes(adminLiveDate)){const today=malaysiaTodayISO();adminLiveDate=dates.includes(today)?today:(dates.find(d=>d>today)||dates[dates.length-1])}}
 function setAdminLiveDate(date){adminLiveDate=date;renderAdminMentorLive()}
 function shiftAdminLiveDate(delta){const dates=adminLiveDates();ensureAdminLiveDate();const i=dates.indexOf(adminLiveDate);if(i<0)return;const ni=i+Number(delta||0);if(ni<0||ni>=dates.length)return;adminLiveDate=dates[ni];renderAdminMentorLive()}
 function activeBookingForMenteeSlot(slotId,menteeId){return bookings.find(b=>b.slotId===slotId&&["pending","approved","reassigned"].includes(b.status)&&String(bookingStudentId(b)||"")===String(menteeId||""))||null}
-function mentorPhoneForBooking(b){if(!b)return "-";const p=profileByMatric(b.mentorMatric)||profileByEmail(b.email);return p?.phone?.trim()||"belum dinyatakan"}
+function mentorPhoneForBooking(b){if(!b)return"-";const p=profileByMatric(b.mentorMatric)||profileByEmail(b.email);return p?.phone?.trim()||"belum dinyatakan"}
+function recognitionMentorMarkup(b){
+  if(!b)return"-";
+  const repl=b.attendanceStatus==="replacement"&&b.replacementName?`<div class="replacement-live-entry"><span class="replacement-arrow">↳</span><div><b>${esc(b.replacementName)}</b><span class="table-subline">${esc(b.replacementMatric||"-")} • Mentor Pengganti</span>${adminMode&&b.replacementEmail?`<span class="table-subline">${esc(b.replacementEmail)}</span>`:""}</div></div>`:"";
+  return `<b>${esc(b.mentorName)}</b><span class="table-subline">${esc(b.mentorMatric||"-")} • ${esc(statusLabel(b.status))}${b.bookingRole==="pksk_host"?" • Felo Yamin":""}</span>${repl}`
+}
+function recognitionPhoneMarkup(b){
+  if(!b)return"-";let html=esc(mentorPhoneForBooking(b));if(b.attendanceStatus==="replacement"&&b.replacementName)html+=`<div class="replacement-live-entry phone"><span class="replacement-arrow">↳</span><div><b>${esc(replacementPhoneForBooking(b))}</b><span class="table-subline">Mentor Pengganti</span></div></div>`;return html
+}
+function recognitionAttendanceMarkup(b,s){
+  if(!b)return"-";
+  if(adminMode){return `<div class="attendance-control"><select onchange="adminSetAttendance('${b.id}',this.value)"><option value="unchecked" ${!b.attendanceStatus||b.attendanceStatus==="unchecked"?"selected":""}>Belum Ditanda</option><option value="present" ${b.attendanceStatus==="present"?"selected":""}>Hadir</option><option value="absent" ${b.attendanceStatus==="absent"?"selected":""}>Tidak Hadir</option><option value="replacement" ${b.attendanceStatus==="replacement"?"selected":""}>Diganti</option><option value="cancelled" ${b.attendanceStatus==="cancelled"?"selected":""}>Dibatalkan</option><option value="withdrawn" ${b.attendanceStatus==="withdrawn"?"selected":""}>Tarik Diri</option></select>${b.checkedInAt?`<span class="table-subline">Check-in ${new Date(b.checkedInAt).toLocaleTimeString("ms-MY",{hour:"2-digit",minute:"2-digit"})}</span>`:""}${b.attendanceStatus==="replacement"&&b.replacementName?'<span class="replacement-present">Pengganti: Hadir</span>':""}</div>`}
+  const mine=bookingBelongsToCurrentMentor(b),today=s?.date===malaysiaTodayISO(),canCheck=mine&&today&&["approved","reassigned"].includes(b.status)&&b.attendanceStatus!=="replacement"&&!b.checkedInAt;
+  return `<div class="attendance-control mentor-attendance-view"><span class="badge ${b.attendanceStatus==="present"?"ok":b.attendanceStatus==="replacement"?"returned":"info"}">${esc(attendanceLabel(b.attendanceStatus))}</span>${canCheck?`<button class="secondary compact-checkin" type="button" onclick="mentorCheckIn('${b.id}')">Saya Sudah Hadir</button>`:""}${b.checkedInAt?`<span class="table-subline">Check-in ${new Date(b.checkedInAt).toLocaleTimeString("ms-MY",{hour:"2-digit",minute:"2-digit"})}</span>`:""}${b.attendanceStatus==="replacement"&&b.replacementName?'<span class="replacement-present">Pengganti: Hadir</span>':""}</div>`
+}
 function renderAdminMentorLive(){
-  if(!adminMode)return;const body=$("adminMentorLiveBody"),dateInput=$("adminLiveDate"),stamp=$("adminLiveUpdated");if(!body)return;
+  const body=$("adminMentorLiveBody"),dateInput=$("adminLiveDate"),stamp=$("adminLiveUpdated");if(!body)return;
   ensureAdminLiveDate();if(dateInput)dateInput.value=adminLiveDate||"";if(stamp)stamp.textContent=`Dikemas kini ${new Date().toLocaleTimeString("ms-MY",{hour:"2-digit",minute:"2-digit"})}`;
+  document.querySelectorAll(".mentor-phone-column").forEach(el=>el.classList.toggle("hidden",!adminMode));
   const slots=SCHEDULE.filter(s=>s.date===adminLiveDate).sort(bookingSlotSort),rows=[];
   for(const s of slots){
-    if(s.mode==="pksk"){
-      const bs=bookings.filter(x=>x.slotId===s.id&&["pending","approved","reassigned"].includes(x.status));
-      if(bs.length)bs.forEach(b=>rows.push({s,mentee:"Ariana + Fathemah",b}));else rows.push({s,mentee:"Ariana + Fathemah",b:null});continue;
-    }
+    if(s.mode==="pksk"){const bs=visiblePkskBookings(s.id);if(bs.length)bs.forEach(b=>rows.push({s,mentee:"Ariana + Fathemah",b}));else rows.push({s,mentee:"Ariana + Fathemah",b:null});continue}
     for(const st of eligibleStudentsForSlot(s))rows.push({s,mentee:st.name,b:activeBookingForMenteeSlot(s.id,st.id)})
   }
-  if(!rows.length){body.innerHTML='<tr><td colspan="6"><div class="empty">Tiada slot untuk tarikh ini.</div></td></tr>';return}
-  body.innerHTML=rows.map(({s,mentee,b})=>`<tr><td><b>${esc(s.day)}, ${fmtDate(s.date)}</b><span class="table-subline">${esc(s.time)} • ${esc(s.subject)}</span></td><td>${esc(s.group)}</td><td><b>${esc(mentee)}</b></td><td>${b?`<b>${esc(b.mentorName)}</b><span class="table-subline">${esc(b.mentorMatric||"-")} • ${esc(statusLabel(b.status))}${b.bookingRole==="pksk_host"?" • Felo Yamin":""}</span>`:"-"}</td><td>${b?esc(mentorPhoneForBooking(b)):"-"}</td><td>${b?`<div class="attendance-control"><select onchange="adminSetAttendance('${b.id}',this.value)"><option value="unchecked" ${!b.attendanceStatus||b.attendanceStatus==="unchecked"?"selected":""}>Belum Ditanda</option><option value="present" ${b.attendanceStatus==="present"?"selected":""}>Hadir</option><option value="absent" ${b.attendanceStatus==="absent"?"selected":""}>Tidak Hadir</option><option value="replacement" ${b.attendanceStatus==="replacement"?"selected":""}>Diganti</option><option value="cancelled" ${b.attendanceStatus==="cancelled"?"selected":""}>Dibatalkan</option><option value="withdrawn" ${b.attendanceStatus==="withdrawn"?"selected":""}>Tarik Diri</option></select>${b.checkedInAt?`<span class="table-subline">Check-in ${new Date(b.checkedInAt).toLocaleTimeString("ms-MY",{hour:"2-digit",minute:"2-digit"})}</span>`:""}</div>`:"-"}</td></tr>`).join("")
+  if(!rows.length){body.innerHTML=`<tr><td colspan="${adminMode?6:5}"><div class="empty">Tiada slot untuk tarikh ini.</div></td></tr>`;return}
+  body.innerHTML=rows.map(({s,mentee,b})=>`<tr><td><b>${esc(s.day)}, ${fmtDate(s.date)}</b><span class="table-subline">${esc(s.time)} • ${esc(s.subject)}</span></td><td>${esc(s.group)}</td><td><b>${esc(mentee)}</b></td><td>${recognitionMentorMarkup(b)}</td><td class="mentor-phone-column ${adminMode?"":"hidden"}">${adminMode?recognitionPhoneMarkup(b):""}</td><td>${recognitionAttendanceMarkup(b,s)}</td></tr>`).join("")
 }
 function printMentorRecognition(){
-  if(!adminMode)return;ensureAdminLiveDate();const slots=SCHEDULE.filter(s=>s.date===adminLiveDate).sort(bookingSlotSort),data=[];
-  for(const s of slots){
-    if(s.mode==="pksk"){
-      const bs=bookings.filter(x=>x.slotId===s.id&&["pending","approved","reassigned"].includes(x.status));
-      if(bs.length)bs.forEach(b=>data.push({s,mentee:"Ariana + Fathemah",b}));else data.push({s,mentee:"Ariana + Fathemah",b:null});continue;
-    }
-    for(const st of eligibleStudentsForSlot(s))data.push({s,mentee:st.name,b:activeBookingForMenteeSlot(s.id,st.id)})
-  }
-  const rows=data.map(({s,mentee,b})=>`<tr><td><b>${esc(s.day)}, ${fmtDate(s.date)}</b><br><small>${esc(s.time)} • ${esc(s.subject)}</small></td><td>${esc(s.group)}</td><td>${esc(mentee)}</td><td>${b?`${esc(b.mentorName)}<br><small>${esc(b.mentorMatric||"-")} • ${esc(statusLabel(b.status))}</small>`:"-"}</td><td>${b?esc(mentorPhoneForBooking(b)):"-"}</td><td>${b?esc(attendanceLabel(b.attendanceStatus)):"-"}</td></tr>`).join("");
-  const html=`<!doctype html><html><head><meta charset="utf-8"><title>Pengecaman Mentor ${esc(adminLiveDate)}</title><style>body{font-family:Arial;color:#1f2d3d}.page{padding:20px}.brand{color:#315b7d;font-weight:bold;font-size:11px}h1{margin:5px 0}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #cfd9e1;padding:7px;font-size:9px;text-align:left;vertical-align:top}th{background:#eef4f8}small{color:#667085}@media print{@page{size:A4 landscape;margin:10mm}.page{padding:0}}</style></head><body><div class="page"><div class="brand">HELAA KRK • Sistem Mentor-Mentee Rukaiyah</div><h1>Pengecaman Mentor</h1><div>${adminLiveDate?fmtDate(adminLiveDate):"-"} • Dicetak ${new Date().toLocaleString("ms-MY")}</div><table><thead><tr><th>Slot (Hari / Tarikh)</th><th>Tahun / Tingkatan</th><th>Nama Mentee</th><th>Nama Mentor</th><th>No. Tel Mentor</th><th>Kehadiran</th></tr></thead><tbody>${rows}</tbody></table></div></body></html>`;printHtmlDocument(html)
+  ensureAdminLiveDate();const slots=SCHEDULE.filter(s=>s.date===adminLiveDate).sort(bookingSlotSort),data=[];
+  for(const s of slots){if(s.mode==="pksk"){const bs=visiblePkskBookings(s.id);if(bs.length)bs.forEach(b=>data.push({s,mentee:"Ariana + Fathemah",b}));else data.push({s,mentee:"Ariana + Fathemah",b:null});continue}for(const st of eligibleStudentsForSlot(s))data.push({s,mentee:st.name,b:activeBookingForMenteeSlot(s.id,st.id)})}
+  const rows=data.map(({s,mentee,b})=>{const repl=b?.attendanceStatus==="replacement"&&b.replacementName?`<br><small>↳ Pengganti: ${esc(b.replacementName)} (${esc(b.replacementMatric||"-")}) • Hadir</small>`:"";return `<tr><td><b>${esc(s.day)}, ${fmtDate(s.date)}</b><br><small>${esc(s.time)} • ${esc(s.subject)}</small></td><td>${esc(s.group)}</td><td>${esc(mentee)}</td><td>${b?`${esc(b.mentorName)}<br><small>${esc(b.mentorMatric||"-")} • ${esc(statusLabel(b.status))}</small>${repl}`:"-"}</td>${adminMode?`<td>${b?esc(mentorPhoneForBooking(b)):"-"}${b?.attendanceStatus==="replacement"&&b.replacementName?`<br><small>↳ ${esc(replacementPhoneForBooking(b))}</small>`:""}</td>`:""}<td>${b?esc(attendanceLabel(b.attendanceStatus)):"-"}${b?.attendanceStatus==="replacement"&&b.replacementName?"<br><small>Pengganti: Hadir</small>":""}</td></tr>`}).join("");
+  const phoneHead=adminMode?"<th>No. Tel Mentor</th>":"";const html=`<!doctype html><html><head><meta charset="utf-8"><title>Pengecaman Mentor ${esc(adminLiveDate)}</title><style>body{font-family:Arial;color:#1f2d3d}.page{padding:20px}.brand{color:#315b7d;font-weight:bold;font-size:11px}h1{margin:5px 0}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #cfd9e1;padding:7px;font-size:9px;text-align:left;vertical-align:top}th{background:#eef4f8}small{color:#667085}@media print{@page{size:A4 landscape;margin:10mm}.page{padding:0}}</style></head><body><div class="page"><div class="brand">HELAA KRK • Sistem Mentor-Mentee Rukaiyah</div><h1>Pengecaman Mentor</h1><div>${adminLiveDate?fmtDate(adminLiveDate):"-"} • Dicetak ${new Date().toLocaleString("ms-MY")}</div><table><thead><tr><th>Slot (Hari / Tarikh)</th><th>Tahun / Tingkatan</th><th>Nama Mentee</th><th>Nama Mentor</th>${phoneHead}<th>Kehadiran</th></tr></thead><tbody>${rows}</tbody></table></div></body></html>`;printHtmlDocument(html)
 }
 
 // ---------- Logistics & Transport ----------
@@ -1723,7 +1755,7 @@ function mergeMentorProfileRows(rows){
 function mapPublicMentorProfile(r){return {id:r.id,email:"",fullName:r.full_name||"",matric:r.matric_no||"",faculty:r.faculty||"",course:r.course||"",phone:"",strength:r.teaching_strength||"",about:r.about||"",photoKey:r.photo_path?sbFileKey("mentor-photos",r.photo_path):"",subjects:r.subjects||[],levels:r.levels||[],otherSubject:"",publicConsent:true,updatedAt:r.updated_at||""}}
 function mapMentee(r){return {id:r.id,name:r.full_name||r.short_name||"",shortName:r.short_name||"",group:r.group_name,summary:r.description||"",photoKey:r.photo_path?sbFileKey("mentee-photos",r.photo_path):""}}
 function mapSlot(r){return {id:r.id,date:r.class_date,day:scheduleDayName(r.class_date),time:r.time_label,subject:r.subject,group:r.group_name,mode:r.mode||"individual",topic:r.topic||"",excludedMenteeIds:r.excluded_mentee_ids||[]}}
-function mapBooking(r){const s=slotById(r.slot_id);return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:r.mentor_email||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:r.allow_reassignment?"yes":"no",mentorNote:r.mentor_note||"",adminNote:r.admin_note||"",withdrawalReason:r.withdrawal_reason||"",withdrawnBy:r.withdrawn_by||"",withdrawnAt:r.withdrawn_at||"",attendanceStatus:r.attendance_status||"unchecked",attendanceNote:r.attendance_note||"",checkedInAt:r.checked_in_at||null,reportReminderLastAt:r.report_reminder_last_at||null,reportReminderCount:Number(r.report_reminder_count||0),bookingRole:r.booking_role||"mentor",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at}}
+function mapBooking(r){const s=slotById(r.slot_id);return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:r.mentor_email||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:r.allow_reassignment?"yes":"no",mentorNote:r.mentor_note||"",adminNote:r.admin_note||"",withdrawalReason:r.withdrawal_reason||"",withdrawnBy:r.withdrawn_by||"",withdrawnAt:r.withdrawn_at||"",attendanceStatus:r.attendance_status||"unchecked",attendanceNote:r.attendance_note||"",checkedInAt:r.checked_in_at||null,replacementName:r.replacement_name||"",replacementEmail:r.replacement_email||"",replacementMatric:r.replacement_matric||"",replacementReason:r.replacement_reason||"",reportReminderLastAt:r.report_reminder_last_at||null,reportReminderCount:Number(r.report_reminder_count||0),bookingRole:r.booking_role||"mentor",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at}}
 function mapMentorServiceRecord(r){
   return {
     bookingId:r.booking_id,
@@ -1772,7 +1804,7 @@ function mentorServiceRowsForMatric(matric,{allStatuses=false}={}){
 }
 function mapPublicBooking(r){
   const s=slotById(r.slot_id);
-  return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:"no",mentorNote:"",adminNote:"",bookingRole:r.booking_role||"mentor",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at};
+  return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:"no",mentorNote:"",adminNote:"",attendanceStatus:r.attendance_status||"unchecked",checkedInAt:r.checked_in_at||null,replacementName:r.replacement_name||"",replacementEmail:"",replacementMatric:r.replacement_matric||"",replacementReason:"",bookingRole:r.booking_role||"mentor",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at};
 }
 function mapMentorEvaluation(r){return {id:r.id,reportId:r.report_id,bookingId:r.booking_id||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",score:Number(r.score||0),comment:r.comment||"",evaluatedBy:r.evaluated_by||"",createdAt:r.created_at,updatedAt:r.updated_at}}
 function mentorEvaluationForReport(reportId){return mentorEvaluations.find(x=>x.reportId===reportId)||null}
@@ -2234,7 +2266,7 @@ Object.assign(window,{
   openMenteeCreate,openMenteeEdit,saveMenteeProfile,deleteMentee,
   approveBooking,openReassign,confirmReassign,renderAdminReassignSlots,renderAdminReassignStudents,renderAdminReassignConflict,rejectBooking,revertBooking,restorePending,withdrawBooking,adminWithdrawBooking,adminEditBooking,deleteBookingRecord,
   approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openArchiveReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation,
-  renderRecycleBin,renderLogisticsPage,renderLogisticsParticipants,updateLogisticsVehicleFields,updateLogisticsParticipantCount,submitAdditionalMaterialEntry,submitLogisticsEntry,approveLogistics,rejectLogistics,adminEditMentorName,printMentorProfile,printMentorRecognition,printClassArchive,remindMissingReport,mentorCheckIn,adminSetAttendance,openPkskHostReport,renderGlobalSearchResults,openGlobalSearchResult,resetArchivePagination,loadMoreArchive,resetArchiveFilters,openFaqMediaEditor,saveFaqMedia,deleteFaqMedia,renderAdminActionCenter,exportAdminCsv,renderAdminAuditLog,resetAdminBookingFilters,
+  renderRecycleBin,openReplacementAttendance,cancelReplacementAttendance,confirmReplacementAttendance,renderLogisticsPage,renderLogisticsParticipants,updateLogisticsVehicleFields,updateLogisticsParticipantCount,submitAdditionalMaterialEntry,submitLogisticsEntry,approveLogistics,rejectLogistics,adminEditMentorName,printMentorProfile,printMentorRecognition,printClassArchive,remindMissingReport,mentorCheckIn,adminSetAttendance,openPkskHostReport,renderGlobalSearchResults,openGlobalSearchResult,resetArchivePagination,loadMoreArchive,resetArchiveFilters,openFaqMediaEditor,saveFaqMedia,deleteFaqMedia,renderAdminActionCenter,exportAdminCsv,renderAdminAuditLog,resetAdminBookingFilters,
   renderAdminMentorLive,setAdminLiveDate,shiftAdminLiveDate
 });
 
