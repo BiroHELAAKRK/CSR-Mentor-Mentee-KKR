@@ -3257,6 +3257,48 @@ async function saveReport(){
   }catch(e){alert("Laporan tidak dapat dihantar: "+(e?.message||e))}
   finally{savingReport=false;setButtonBusy(submitBtn,false)}
 }
+async function reportStatusUpdate(id,status,feedback=""){
+  if(!adminMode){alert("Akses Pentadbir diperlukan.");return false}
+  const r=reports.find(x=>x.id===id),b=bookings.find(x=>x.id===r?.bookingId);
+  if(!r||!b){alert("Rekod laporan atau tempahan tidak ditemui. Sila refresh halaman dan cuba semula.");return false}
+  if(!supabaseClient||!currentUserId){alert("Sesi Pentadbir tidak tersedia. Sila refresh halaman atau log masuk semula.");return false}
+
+  const allowed=new Set(["approved","returned","rejected"]);
+  if(!allowed.has(status)){alert("Status laporan tidak sah.");return false}
+
+  const payload={
+    status,
+    admin_feedback:status==="approved"?null:(String(feedback||"").trim()||null),
+    reviewed_by:currentUserId,
+    reviewed_at:new Date().toISOString(),
+    updated_at:new Date().toISOString()
+  };
+
+  const {error}=await supabaseClient.from("reports").update(payload).eq("id",id);
+  if(error){
+    console.error("Report status update failed",error);
+    alert("Status laporan tidak dapat dikemas kini: "+(error.message||error));
+    return false;
+  }
+
+  const message=status==="approved"
+    ? `Laporan bagi ${b.ticket} telah DILULUSKAN.`
+    : status==="returned"
+      ? `Laporan bagi ${b.ticket} dipulangkan untuk pembetulan.${feedback?` Catatan: ${feedback}`:""}`
+      : `Laporan bagi ${b.ticket} tidak diluluskan.${feedback?` Catatan: ${feedback}`:""}`;
+
+  try{
+    await pushNotification({userId:b.userId,message,linkType:"report",linkId:id});
+  }catch(notificationError){
+    console.warn("Report notification failed after successful status update",notificationError);
+  }
+
+  await loadSupabaseState();
+  if(status==="approved")alert("Laporan berjaya diluluskan.");
+  else if(status==="returned")alert("Laporan berjaya dipulangkan untuk pembetulan.");
+  else alert("Laporan telah ditandakan Tidak Lulus.");
+  return true;
+}
 async function approveReport(id){await reportStatusUpdate(id,"approved")}
 async function returnReport(id){const n=prompt("Nyatakan pembetulan yang diperlukan:","");if(n)await reportStatusUpdate(id,"returned",n)}
 async function rejectReport(id){const n=prompt("Sebab laporan tidak diluluskan:","");if(n)await reportStatusUpdate(id,"rejected",n)}
