@@ -157,6 +157,7 @@ let recycleBin = [];
 let logisticsEntries = [];
 let faqMedia = [];
 let menteeExamResults = [];
+let academicSubjectFilter = "all";
 let adminAuditLog = [];
 let adminLiveDate = "";
 let archiveVisibleCount = 25;
@@ -1085,48 +1086,125 @@ function openMenteeEdit(id){
 }
 function examRowsForMentee(menteeId){return menteeExamResults.filter(x=>x.menteeId===menteeId).sort((a,b)=>new Date(b.updatedAt||b.createdAt||0)-new Date(a.updatedAt||a.createdAt||0))}
 function normalizedExamName(x){return String(x?.examName||'').trim().toUpperCase()}
+function normalizedExamSubject(x){return String(x?.subject||'Umum').trim()||'Umum'}
 function latestExamMatch(menteeId,predicate){return examRowsForMentee(menteeId).find(predicate)||null}
-function formatExamScore(x){if(!x)return'—';const n=Number(x.score);return `${Number.isFinite(n)?(Number.isInteger(n)?n:n.toFixed(1)):'-'}% • ${esc(x.grade||'-')}`}
-function examStatusCard(label,x){return `<div class="academic-stat-card"><span>${esc(label)}</span><b>${x?formatExamScore(x):'Belum direkodkan'}</b>${x?.note?`<small>${esc(x.note)}</small>`:''}</div>`}
-function menteeExamSummary(st){
-  const upt=latestExamMatch(st.id,x=>x.recordType==='actual'&&normalizedExamName(x).startsWith('UPT'));
-  const target=latestExamMatch(st.id,x=>x.recordType==='target'&&normalizedExamName(x).includes('UASA'));
-  const uasa=latestExamMatch(st.id,x=>x.recordType==='actual'&&normalizedExamName(x).startsWith('UASA'));
+function isPrimaryMentee(st){return /^Tahun\s+\d+/i.test(String(st?.group||''))}
+function isSecondaryMentee(st){return /^Tingkatan\s+\d+/i.test(String(st?.group||''))}
+function academicSubjectOptions(){return [...new Set(SUBJECT_OPTIONS.filter(x=>x&&x!=='Lain-lain'))]}
+function fillMenteeExamSubjectOptions(selected=''){
+  const el=$('menteeExamSubject');if(!el)return;
+  const opts=academicSubjectOptions();
+  el.innerHTML=opts.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  if(selected&&opts.includes(selected))el.value=selected;else if(!el.value)el.value=opts[0]||'';
+}
+function toggleMenteeExamAssessmentFields(){
+  const st=studentById($('activeMenteeProfileId')?.value);const primary=isPrimaryMentee(st);
+  $('menteeExamPrimaryAssessment')?.classList.toggle('hidden',!primary);
+  $('menteeExamSecondaryScore')?.classList.toggle('hidden',primary);
+  $('menteeExamSecondaryGrade')?.classList.toggle('hidden',primary);
+}
+function formatExamScore(x,st=null){
+  if(!x)return'—';
+  const primary=st?isPrimaryMentee(st):Number(x.masteryLevel)>=1;
+  if(primary){
+    const tp=Number(x.masteryLevel)||Number(String(x.grade||'').replace(/\D/g,''));
+    return tp>=1&&tp<=6?`TP${tp}`:(x.grade?esc(x.grade):'—');
+  }
+  const n=Number(x.score);const score=Number.isFinite(n)?`${Number.isInteger(n)?n:n.toFixed(1)}%`:'';const grade=String(x.grade||'').trim();
+  return [score,grade].filter(Boolean).map(esc).join(' • ')||'—';
+}
+function examStageMatch(x,stage){
+  const name=normalizedExamName(x);
+  if(stage==='upt')return x.recordType==='actual'&&name.startsWith('UPT');
+  if(stage==='target')return x.recordType==='target'&&name.includes('UASA');
+  if(stage==='uasa')return x.recordType==='actual'&&name.startsWith('UASA');
+  return false;
+}
+function latestSubjectStage(menteeId,subject,stage){
+  const wanted=String(subject||'').trim().toLowerCase();
+  return examRowsForMentee(menteeId).find(x=>normalizedExamSubject(x).toLowerCase()===wanted&&examStageMatch(x,stage))||null;
+}
+function menteeRecordedSubjects(st){
+  return [...new Set(examRowsForMentee(st.id).map(x=>normalizedExamSubject(x)).filter(Boolean))]
+    .sort((a,b)=>academicSubjectOptions().indexOf(a)-academicSubjectOptions().indexOf(b)||a.localeCompare(b,'ms'));
+}
+function menteeExamSummary(st,subject=null){
+  if(subject){return {upt:latestSubjectStage(st.id,subject,'upt'),target:latestSubjectStage(st.id,subject,'target'),uasa:latestSubjectStage(st.id,subject,'uasa')}}
+  const upt=latestExamMatch(st.id,x=>examStageMatch(x,'upt'));
+  const target=latestExamMatch(st.id,x=>examStageMatch(x,'target'));
+  const uasa=latestExamMatch(st.id,x=>examStageMatch(x,'uasa'));
   return {upt,target,uasa}
+}
+function gradeSortKey(g){
+  const order=['A+','A','A-','B+','B','C+','C','D','E','G'];const i=order.indexOf(String(g||'').toUpperCase());return i<0?999:i
+}
+function summarizeLatestResult(st){
+  const rows=examRowsForMentee(st.id).filter(x=>examStageMatch(x,'uasa'));
+  const latestBySubject=new Map();for(const r of rows){const key=normalizedExamSubject(r);if(!latestBySubject.has(key))latestBySubject.set(key,r)}
+  const values=[...latestBySubject.values()];
+  if(!values.length)return {text:'—',label:'UASA belum direkodkan'};
+  if(isPrimaryMentee(st)){
+    const counts=new Map();for(const r of values){const tp=Number(r.masteryLevel)||Number(String(r.grade||'').replace(/\D/g,''));if(tp>=1&&tp<=6)counts.set(tp,(counts.get(tp)||0)+1)}
+    const text=[...counts.entries()].sort((a,b)=>b[0]-a[0]).map(([tp,n])=>`${n}TP${tp}`).join(' • ');
+    return {text:text||'—',label:'UASA'};
+  }
+  const counts=new Map();for(const r of values){const g=String(r.grade||'').trim().toUpperCase();if(g)counts.set(g,(counts.get(g)||0)+1)}
+  const text=[...counts.entries()].sort((a,b)=>gradeSortKey(a[0])-gradeSortKey(b[0])).map(([g,n])=>`${n}${g}`).join(' • ');
+  return {text:text||'—',label:'UASA'};
+}
+function renderSubjectAcademicTable(st,subject){
+  const s=menteeExamSummary(st,subject);
+  return `<section class="academic-subject-card"><div class="academic-subject-title"><h5>${esc(subject)}</h5><span class="mini-status">${isPrimaryMentee(st)?'TP1–TP6':'Markah + Gred'}</span></div><div class="horizontal-table-wrap"><table class="data-table academic-subject-table"><thead><tr><th>UPT</th><th>Target UASA</th><th>UASA</th></tr></thead><tbody><tr><td>${s.upt?formatExamScore(s.upt,st):'—'}</td><td>${s.target?formatExamScore(s.target,st):'—'}</td><td>${s.uasa?formatExamScore(s.uasa,st):'—'}</td></tr></tbody></table></div></section>`;
 }
 function renderMenteeExamList(st){
   const rows=examRowsForMentee(st.id);if(!rows.length)return'<div class="empty compact">Belum ada keputusan peperiksaan atau target direkodkan.</div>';
-  return `<div class="mentee-exam-list">${rows.map(x=>`<div class="mentee-exam-row"><div><b>${x.recordType==='target'?'Target ':''}${esc(x.examName)}</b><span>${formatExamScore(x)}${x.note?` • ${esc(x.note)}`:''}</span></div>${adminMode?`<div class="actions"><button class="ghost" type="button" onclick="editMenteeExamResult('${x.id}')">Edit</button><button class="danger" type="button" onclick="deleteMenteeExamResult('${x.id}')">Padam</button></div>`:''}</div>`).join('')}</div>`
+  const grouped=new Map();for(const x of rows){const subject=normalizedExamSubject(x);if(!grouped.has(subject))grouped.set(subject,[]);grouped.get(subject).push(x)}
+  return `<div class="mentee-exam-list">${[...grouped.entries()].map(([subject,list])=>`<div class="mentee-exam-subject-records"><div class="mentee-exam-subject-label">${esc(subject)}</div>${list.map(x=>`<div class="mentee-exam-row"><div><b>${x.recordType==='target'?'Target ':''}${esc(x.examName)}</b><span>${formatExamScore(x,st)}${x.note?` • ${esc(x.note)}`:''}</span></div>${adminMode?`<div class="actions"><button class="ghost" type="button" onclick="editMenteeExamResult('${x.id}')">Edit</button><button class="danger" type="button" onclick="deleteMenteeExamResult('${x.id}')">Padam</button></div>`:''}</div>`).join('')}</div>`).join('')}</div>`
 }
-function openMenteeProfile(id){const st=studentById(id);if(!st)return;$('activeMenteeProfileId').value=id;$('menteeProfileModalTitle').textContent=st.name;cancelMenteeExamEdit();renderMenteeProfileModal();$('menteeProfileModal').classList.add('open');hydrateStoredImages($('menteeProfileModal'))}
+function openMenteeProfile(id){const st=studentById(id);if(!st)return;$('activeMenteeProfileId').value=id;$('menteeProfileModalTitle').textContent=st.name;cancelMenteeExamEdit();fillMenteeExamSubjectOptions();toggleMenteeExamAssessmentFields();renderMenteeProfileModal();$('menteeProfileModal').classList.add('open');hydrateStoredImages($('menteeProfileModal'))}
 function renderMenteeProfileModal(){
-  const st=studentById($('activeMenteeProfileId')?.value);if(!st)return;const s=menteeExamSummary(st),age=menteeAge(st);
-  $('menteeProfileModalContent').innerHTML=`<div class="mentee-profile-popup-head"><img class="profile-photo large" ${st.photoKey?`data-file-key="${esc(st.photoKey)}"`:''} alt="${esc(st.name)}"><div><h3>${esc(st.name)}</h3><div class="meta">${esc(st.group)}${age!==null?` • ${age} tahun`:''}</div><div class="mentee-badges">${menteeCategoryBadge(st)}${st.studentType==='sponsored'?'<span class="tag sponsored-tag">Anak Tajaan</span>':''}</div><p>${esc(st.summary||'Maklumat ringkas belum ditambah.')}</p></div></div><div class="academic-stat-grid">${examStatusCard('UPT',s.upt)}${examStatusCard('Target UASA',s.target)}${examStatusCard('UASA',s.uasa)}</div><div class="section-divider"></div><div class="section-head-row"><div><div class="eyebrow">Rekod Akademik</div><h4>Peperiksaan & Target</h4></div><span class="mini-status">${examRowsForMentee(st.id).length} rekod</span></div>${renderMenteeExamList(st)}`;
-  $('menteeExamAdminPanel')?.classList.toggle('hidden',!adminMode);hydrateStoredImages($('menteeProfileModal'))
+  const st=studentById($('activeMenteeProfileId')?.value);if(!st)return;const age=menteeAge(st),subjects=menteeRecordedSubjects(st);
+  const subjectTables=subjects.length?subjects.map(subject=>renderSubjectAcademicTable(st,subject)).join(''):'<div class="empty compact">Belum ada keputusan mengikut subjek direkodkan.</div>';
+  $('menteeProfileModalContent').innerHTML=`<div class="mentee-profile-popup-head"><img class="profile-photo large" ${st.photoKey?`data-file-key="${esc(st.photoKey)}"`:''} alt="${esc(st.name)}"><div><h3>${esc(st.name)}</h3><div class="meta">${esc(st.group)}${age!==null?` • ${age} tahun`:''}</div><div class="mentee-badges">${menteeCategoryBadge(st)}${st.studentType==='sponsored'?'<span class="tag sponsored-tag">Anak Tajaan</span>':''}</div><p>${esc(st.summary||'Maklumat ringkas belum ditambah.')}</p></div></div><div class="section-divider"></div><div class="section-head-row"><div><div class="eyebrow">Rekod Akademik</div><h4>UPT • Target UASA • UASA Mengikut Subjek</h4></div><span class="mini-status">${subjects.length} subjek</span></div><div class="academic-subject-list">${subjectTables}</div><div class="section-divider"></div><div class="section-head-row"><div><div class="eyebrow">Rekod Terperinci</div><h4>Peperiksaan & Target</h4></div><span class="mini-status">${examRowsForMentee(st.id).length} rekod</span></div>${renderMenteeExamList(st)}`;
+  $('menteeExamAdminPanel')?.classList.toggle('hidden',!adminMode);fillMenteeExamSubjectOptions($('menteeExamSubject')?.value||'');toggleMenteeExamAssessmentFields();hydrateStoredImages($('menteeProfileModal'))
+}
+function setAcademicSubjectFilter(value){academicSubjectFilter=value||'all';renderAcademicResults()}
+function fillAcademicSubjectFilter(){
+  const el=$('academicSubjectFilter');if(!el)return;
+  const recorded=[...new Set(menteeExamResults.map(x=>normalizedExamSubject(x)).filter(Boolean))];
+  const all=[...new Set([...academicSubjectOptions(),...recorded])];
+  const current=academicSubjectFilter||'all';
+  el.innerHTML=`<option value="all">Semua Subjek</option>${all.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('')}`;
+  el.value=all.includes(current)?current:'all';academicSubjectFilter=el.value;
 }
 function renderAcademicResults(){
-  const body=$('academicResultsBody');if(!body)return;
+  const body=$('academicResultsBody'),head=$('academicResultsHead');if(!body||!head)return;fillAcademicSubjectFilter();
   const list=[...students].sort((a,b)=>educationGroupRank(a.group)-educationGroupRank(b.group)||String(a.name).localeCompare(String(b.name),'ms'));
-  body.innerHTML=list.length?list.map(st=>{
-    const s=menteeExamSummary(st),other=examRowsForMentee(st.id).filter(x=>!(normalizedExamName(x).startsWith('UPT')||normalizedExamName(x).includes('UASA'))).slice(0,3);
-    const nameCell=st.studentType==='sponsored'
-      ? `<b>${esc(st.name)}</b><span class="table-subline">Anak Tajaan</span>`
-      : `<button class="link-btn academic-name-btn" type="button" onclick="openMenteeProfile('${st.id}')"><b>${esc(st.name)}</b></button>`;
-    return `<tr><td>${nameCell}</td><td>${esc(st.group)}</td><td>${esc(menteeCategoryLabel(st.welfareCategory))}</td><td>${s.upt?formatExamScore(s.upt):'—'}</td><td>${s.target?formatExamScore(s.target):'—'}</td><td>${s.uasa?formatExamScore(s.uasa):'—'}</td><td>${other.length?other.map(x=>`${x.recordType==='target'?'Target ':''}${esc(x.examName)}: ${formatExamScore(x)}`).join('<br>'):'—'}</td></tr>`
-  }).join(''):'<tr><td colspan="7"><div class="empty">Belum ada mentee untuk dipaparkan.</div></td></tr>'
+  const selected=academicSubjectFilter||'all';const hint=$('academicViewHint');
+  if(selected==='all'){
+    head.innerHTML='<tr><th>Mentee</th><th>Tahun / Tingkatan</th><th>Kategori</th><th>Keputusan UASA</th></tr>';
+    if(hint)hint.innerHTML='<b>Semua Subjek:</b> keputusan dipadatkan sebagai ringkasan, contohnya <b>3A • 5C • 3E</b>. Sekolah rendah dipaparkan sebagai bilangan TP.';
+    body.innerHTML=list.length?list.map(st=>{const summary=summarizeLatestResult(st);const nameCell=st.studentType==='sponsored'?`<b>${esc(st.name)}</b><span class="table-subline">Anak Tajaan</span>`:`<button class="link-btn academic-name-btn" type="button" onclick="openMenteeProfile('${st.id}')"><b>${esc(st.name)}</b></button>`;return `<tr><td>${nameCell}</td><td>${esc(st.group)}</td><td>${esc(menteeCategoryLabel(st.welfareCategory))}</td><td><b class="result-summary-text">${esc(summary.text)}</b>${summary.text!=='—'?`<span class="table-subline">${esc(summary.label)}</span>`:''}</td></tr>`}).join(''):'<tr><td colspan="4"><div class="empty">Belum ada mentee untuk dipaparkan.</div></td></tr>';
+    return;
+  }
+  head.innerHTML='<tr><th>Mentee</th><th>Tahun / Tingkatan</th><th>UPT</th><th>Target UASA</th><th>UASA</th></tr>';
+  if(hint)hint.innerHTML=`<b>${esc(selected)}:</b> sekolah rendah menggunakan <b>TP1–TP6</b>. Sekolah menengah memaparkan <b>markah + gred A+ hingga G</b>.`;
+  body.innerHTML=list.length?list.map(st=>{const s=menteeExamSummary(st,selected);const nameCell=st.studentType==='sponsored'?`<b>${esc(st.name)}</b><span class="table-subline">Anak Tajaan</span>`:`<button class="link-btn academic-name-btn" type="button" onclick="openMenteeProfile('${st.id}')"><b>${esc(st.name)}</b></button>`;return `<tr><td>${nameCell}</td><td>${esc(st.group)}</td><td>${s.upt?formatExamScore(s.upt,st):'—'}</td><td>${s.target?formatExamScore(s.target,st):'—'}</td><td>${s.uasa?formatExamScore(s.uasa,st):'—'}</td></tr>`}).join(''):'<tr><td colspan="5"><div class="empty">Belum ada mentee untuk dipaparkan.</div></td></tr>'
 }
-function cancelMenteeExamEdit(){if($('menteeExamEditId'))$('menteeExamEditId').value='';if($('menteeExamType'))$('menteeExamType').value='actual';if($('menteeExamName'))$('menteeExamName').value='';if($('menteeExamScore'))$('menteeExamScore').value='';if($('menteeExamGrade'))$('menteeExamGrade').value='';if($('menteeExamNote'))$('menteeExamNote').value='';$('cancelMenteeExamEditBtn')?.classList.add('hidden')}
-function editMenteeExamResult(id){if(!adminMode)return;const x=menteeExamResults.find(r=>r.id===id);if(!x)return;$('menteeExamEditId').value=x.id;$('menteeExamType').value=x.recordType;$('menteeExamName').value=x.examName;$('menteeExamScore').value=x.score;$('menteeExamGrade').value=x.grade;$('menteeExamNote').value=x.note||'';$('cancelMenteeExamEditBtn').classList.remove('hidden')}
+function cancelMenteeExamEdit(){if($('menteeExamEditId'))$('menteeExamEditId').value='';if($('menteeExamType'))$('menteeExamType').value='actual';if($('menteeExamName'))$('menteeExamName').value='';if($('menteeExamScore'))$('menteeExamScore').value='';if($('menteeExamGrade'))$('menteeExamGrade').value='';if($('menteeExamMastery'))$('menteeExamMastery').value='';fillMenteeExamSubjectOptions();toggleMenteeExamAssessmentFields();if($('menteeExamNote'))$('menteeExamNote').value='';$('cancelMenteeExamEditBtn')?.classList.add('hidden')}
+function editMenteeExamResult(id){if(!adminMode)return;const x=menteeExamResults.find(r=>r.id===id);if(!x)return;$('menteeExamEditId').value=x.id;$('menteeExamType').value=x.recordType;$('menteeExamName').value=x.examName;fillMenteeExamSubjectOptions(normalizedExamSubject(x));$('menteeExamScore').value=Number.isFinite(Number(x.score))?x.score:'';$('menteeExamGrade').value=String(x.grade||'').toUpperCase();$('menteeExamMastery').value=x.masteryLevel||Number(String(x.grade||'').replace(/\D/g,''))||'';$('menteeExamNote').value=x.note||'';toggleMenteeExamAssessmentFields();$('cancelMenteeExamEditBtn').classList.remove('hidden')}
 async function saveMenteeExamResult(){
   if(!adminMode)return;
-  const menteeId=$('activeMenteeProfileId').value,editId=$('menteeExamEditId').value,recordType=$('menteeExamType').value,examName=$('menteeExamName').value.trim(),score=Number($('menteeExamScore').value),grade=$('menteeExamGrade').value.trim().toUpperCase(),note=$('menteeExamNote').value.trim();
-  if(!menteeId||!examName||!Number.isFinite(score)||score<0||score>100||!grade){alert('Lengkapkan nama peperiksaan, markah 0 hingga 100 dan gred.');return}
-  let error;
-  if(editId){
-    ({error}=await supabaseClient.from('mentee_exam_results').update({record_type:recordType,exam_name:examName,score,grade,note:note||null}).eq('id',editId));
+  const menteeId=$('activeMenteeProfileId').value,st=studentById(menteeId),editId=$('menteeExamEditId').value,recordType=$('menteeExamType').value,examName=$('menteeExamName').value.trim(),subject=$('menteeExamSubject').value.trim(),note=$('menteeExamNote').value.trim();
+  if(!menteeId||!st||!subject||!examName){alert('Lengkapkan subjek dan nama peperiksaan.');return}
+  let score=null,grade=null,masteryLevel=null;
+  if(isPrimaryMentee(st)){
+    masteryLevel=Number($('menteeExamMastery').value);if(!Number.isInteger(masteryLevel)||masteryLevel<1||masteryLevel>6){alert('Pilih Tahap Penguasaan TP1 hingga TP6.');return}grade=`TP${masteryLevel}`;
   }else{
-    ({error}=await supabaseClient.from('mentee_exam_results').insert({mentee_id:menteeId,record_type:recordType,exam_name:examName,score,grade,note:note||null,created_by:currentUserId}));
+    score=Number($('menteeExamScore').value);grade=$('menteeExamGrade').value.trim().toUpperCase();const allowed=['A+','A','A-','B+','B','C+','C','D','E','G'];if(!Number.isFinite(score)||score<0||score>100||!allowed.includes(grade)){alert('Untuk sekolah menengah, lengkapkan markah 0 hingga 100 dan pilih gred A+ hingga G.');return}
   }
+  const payload={record_type:recordType,exam_name:examName,subject,score,grade,mastery_level:masteryLevel,note:note||null};let error;
+  if(editId){({error}=await supabaseClient.from('mentee_exam_results').update(payload).eq('id',editId))}else{({error}=await supabaseClient.from('mentee_exam_results').insert({mentee_id:menteeId,...payload,created_by:currentUserId}))}
   if(error){alert('Rekod akademik tidak dapat disimpan: '+error.message);return}
   cancelMenteeExamEdit();await loadSupabaseState();$('activeMenteeProfileId').value=menteeId;renderMenteeProfileModal();renderAcademicResults();alert('Rekod akademik berjaya disimpan.')
 }
@@ -1806,7 +1884,7 @@ function mergeMentorProfileRows(rows){
 
 function mapPublicMentorProfile(r){return {id:r.id,email:"",fullName:r.full_name||"",matric:r.matric_no||"",faculty:r.faculty||"",course:r.course||"",college:r.college||"",phone:"",strength:r.teaching_strength||"",about:r.about||"",photoKey:r.photo_path?sbFileKey("mentor-photos",r.photo_path):"",subjects:r.subjects||[],levels:r.levels||[],otherSubject:"",publicConsent:true,updatedAt:r.updated_at||""}}
 function mapMentee(r){return {id:r.id,name:r.full_name||r.short_name||"",shortName:r.short_name||"",group:r.group_name,summary:r.description||"",welfareCategory:r.welfare_category||"",studentType:r.student_type||"resident",classAvailable:r.class_available!==false,dateOfBirth:r.date_of_birth||"",photoKey:r.photo_path?sbFileKey("mentee-photos",r.photo_path):""}}
-function mapMenteeExamResult(r){return {id:r.id,menteeId:r.mentee_id,recordType:r.record_type||"actual",examName:r.exam_name||"",score:Number(r.score),grade:r.grade||"",note:r.note||"",createdAt:r.created_at||"",updatedAt:r.updated_at||""}}
+function mapMenteeExamResult(r){return {id:r.id,menteeId:r.mentee_id,recordType:r.record_type||"actual",examName:r.exam_name||"",subject:r.subject||"Umum",score:r.score===null||r.score===undefined?null:Number(r.score),grade:r.grade||"",masteryLevel:r.mastery_level===null||r.mastery_level===undefined?null:Number(r.mastery_level),note:r.note||"",createdAt:r.created_at||"",updatedAt:r.updated_at||""}}
 function mapSlot(r){return {id:r.id,date:r.class_date,day:scheduleDayName(r.class_date),time:r.time_label,subject:r.subject,group:r.group_name,mode:r.mode||"individual",topic:r.topic||"",excludedMenteeIds:r.excluded_mentee_ids||[]}}
 function mapBooking(r){const s=slotById(r.slot_id);return {id:r.id,ticket:r.booking_no||String(r.id).slice(0,8).toUpperCase(),slotId:r.slot_id,userId:r.mentor_id,email:r.mentor_email||"",mentorMatric:r.mentor_matric||"",mentorName:r.mentor_name||"",requestedStudentId:r.requested_mentee_id||(s?.mode==="pksk"?"pksk-pair":""),requestedStudentName:s?.mode==="pksk"?"Ariana + Fathemah":studentById(r.requested_mentee_id)?.name||"",requestedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",assignedStudentId:r.assigned_mentee_id||(s?.mode==="pksk"&&["approved","reassigned"].includes(r.status)?"pksk-pair":""),assignedStudent:s?.mode==="pksk"?"Ariana + Fathemah":"",consent:r.allow_reassignment?"yes":"no",mentorNote:r.mentor_note||"",adminNote:r.admin_note||"",withdrawalReason:r.withdrawal_reason||"",withdrawnBy:r.withdrawn_by||"",withdrawnAt:r.withdrawn_at||"",attendanceStatus:r.attendance_status||"unchecked",attendanceNote:r.attendance_note||"",checkedInAt:r.checked_in_at||null,replacementName:r.replacement_name||"",replacementEmail:r.replacement_email||"",replacementMatric:r.replacement_matric||"",replacementReason:r.replacement_reason||"",reportReminderLastAt:r.report_reminder_last_at||null,reportReminderCount:Number(r.report_reminder_count||0),bookingRole:r.booking_role||"mentor",status:r.status,createdAt:r.created_at,updatedAt:r.updated_at}}
 function mapMentorServiceRecord(r){
@@ -2400,7 +2478,7 @@ Object.assign(window,{
   openAdminPane,switchAdminPane,renderAdminBookings,toggleBookingReview,setMentorBookingFilter,renderAdminReports,renderAdminMentees,renderAdminSchedule,
   saveScheduleItem,cancelScheduleEdit,editScheduleItem,deleteScheduleItem,
   saveMaterialSet,cancelMaterialEdit,editMaterial,deleteMaterial,removeMaterialFile,
-  openMenteeCreate,openSponsoredMenteeCreate,openMenteeEdit,saveMenteeProfile,deleteMentee,openMenteeProfile,saveMenteeExamResult,editMenteeExamResult,deleteMenteeExamResult,cancelMenteeExamEdit,setSponsoredClassAvailability,toggleMenteeTypeFields,toggleMentorCollegeOther,
+  openMenteeCreate,openSponsoredMenteeCreate,openMenteeEdit,saveMenteeProfile,deleteMentee,openMenteeProfile,saveMenteeExamResult,editMenteeExamResult,deleteMenteeExamResult,cancelMenteeExamEdit,setAcademicSubjectFilter,setSponsoredClassAvailability,toggleMenteeTypeFields,toggleMentorCollegeOther,
   approveBooking,openReassign,confirmReassign,renderAdminReassignSlots,renderAdminReassignStudents,renderAdminReassignConflict,rejectBooking,revertBooking,restorePending,withdrawBooking,adminWithdrawBooking,adminEditBooking,deleteBookingRecord,
   approveReport,returnReport,rejectReport,adminEditReport,deleteReportRecord,printMentorReport,printDraftMentorReport,openArchiveReport,openMentorEvaluation,saveMentorEvaluation,deleteMentorEvaluation,
   renderRecycleBin,openReplacementAttendance,cancelReplacementAttendance,confirmReplacementAttendance,renderLogisticsPage,renderLogisticsParticipants,updateLogisticsVehicleFields,updateLogisticsParticipantCount,submitAdditionalMaterialEntry,submitLogisticsEntry,approveLogistics,rejectLogistics,adminEditMentorName,printMentorProfile,printMentorRecognition,printClassArchive,remindMissingReport,mentorCheckIn,adminSetAttendance,openPkskHostReport,renderGlobalSearchResults,openGlobalSearchResult,resetArchivePagination,loadMoreArchive,resetArchiveFilters,openFaqMediaEditor,saveFaqMedia,deleteFaqMedia,renderAdminActionCenter,exportAdminCsv,renderAdminAuditLog,resetAdminBookingFilters,
