@@ -2019,6 +2019,33 @@ async function restorePending(id){const b=bookings.find(x=>x.id===id);if(!b)retu
 async function deleteBookingRecord(id){const b=bookings.find(x=>x.id===id);if(!b||!confirm(`Padam rekod tempahan ${b.ticket}?`))return;const {error}=await supabaseClient.from("bookings").delete().eq("id",id);if(error){alert(error.message);return}await loadSupabaseState()}
 async function adminEditBooking(id){const b=bookings.find(x=>x.id===id);if(!b)return;const name=prompt("Nama penuh mentor:",b.mentorName||"");if(name===null)return;const email=prompt("E-mel mentor:",b.email||"");if(email===null)return;const matric=prompt("Nombor matrik:",b.mentorMatric||"");if(matric===null)return;const note=prompt("Catatan mentor / rekod:",b.mentorNote||"");if(note===null)return;const {error}=await supabaseClient.from("bookings").update({mentor_name:name.trim().toUpperCase(),mentor_email:email.trim().toLowerCase(),mentor_matric:matric.trim(),mentor_note:note.trim()}).eq("id",id);if(error){alert(error.message);return}await loadSupabaseState();alert("Rekod tempahan berjaya disunting.")}
 
+async function withdrawBooking(id){
+  const b=bookings.find(x=>x.id===id);if(!b)return;
+  if(!["pending","approved","reassigned"].includes(b.status)){alert("Tempahan ini tidak lagi boleh ditarik diri.");return}
+  if(reports.some(r=>r.bookingId===id)){alert("Laporan sesi sudah wujud. Hubungi Pentadbir jika rekod ini perlu dibetulkan.");return}
+  const reason=prompt("Nyatakan sebab tarik diri:","");if(reason===null)return;
+  if(!reason.trim()){alert("Sebab tarik diri wajib dinyatakan.");return}
+  if(!confirm("Sahkan tarik diri? Slot / mentee ini akan dibuka semula kepada mentor lain."))return;
+  const {data,error}=await supabaseClient.rpc("withdraw_booking",{p_booking_id:id,p_reason:reason.trim(),p_as_admin:false});
+  if(error){alert("Tarik diri tidak berjaya: "+error.message);return}
+  await pushNotification({audience:"admin",message:`${b.mentorName} (${b.mentorMatric}) telah TARIK DIRI daripada tempahan ${b.ticket}. Sebab: ${reason.trim()}`,linkType:"booking",linkId:id});
+  await loadSupabaseState();
+  alert("Tarik diri berjaya. Slot telah dibuka semula untuk mentor lain.")
+}
+async function adminWithdrawBooking(id){
+  const b=bookings.find(x=>x.id===id);if(!b)return;
+  if(!["pending","approved","reassigned"].includes(b.status)){alert("Tempahan ini tidak lagi boleh dibatalkan sebagai tarik diri.");return}
+  if(reports.some(r=>r.bookingId===id)){alert("Laporan sesi sudah wujud. Padam / betulkan laporan dahulu jika benar-benar perlu membatalkan tempahan ini.");return}
+  const reason=prompt("Nyatakan sebab mentor tarik diri / tidak dapat hadir:","");if(reason===null)return;
+  if(!reason.trim()){alert("Sebab wajib dinyatakan.");return}
+  if(!confirm(`Sahkan tarik diri bagi ${b.mentorName}? Slot akan dibuka semula kepada mentor lain.`))return;
+  const {data,error}=await supabaseClient.rpc("withdraw_booking",{p_booking_id:id,p_reason:reason.trim(),p_as_admin:true});
+  if(error){alert("Tidak berjaya: "+error.message);return}
+  await pushNotification({userId:b.userId,message:`Tempahan ${b.ticket} telah ditandakan TARIK DIRI / DIBATALKAN. Sebab: ${reason.trim()}. Slot telah dibuka semula.`,linkType:"booking",linkId:id});
+  await loadSupabaseState();
+  alert("Rekod tarik diri disimpan dan slot telah dibuka semula.")
+}
+
 async function saveMenteeProfile(){
   if(!adminMode)return;let id=$('menteeEditId').value.trim(),name=$('menteeEditName').value.trim(),group=$('menteeEditGroup').value,summary=$('menteeEditSummary').value.trim(),welfare=$('menteeEditCategory').value||null,studentType=$('menteeEditType').value||'resident',dob=$('menteeEditDob').value||null,classAvailable=studentType==='resident'?true:!!$('menteeEditClassAvailable').checked;
   if(!name||!group){alert('Nama dan Tahun/Tingkatan diperlukan.');return}
